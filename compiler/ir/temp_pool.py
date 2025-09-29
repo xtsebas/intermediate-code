@@ -1,10 +1,13 @@
 from typing import Set, List, Optional
 from collections import deque
 
-
 class TemporaryPool:
     def __init__(self):
         self.next_temp_id = 0
+        self.available_temps = deque()
+        self.in_use_temps = set()
+        self.scope_stack = []
+        self.global_max_temps = 0
     
     def allocate(self) -> str:
         if self.available_temps:
@@ -15,8 +18,8 @@ class TemporaryPool:
         
         self.in_use_temps.add(temp_name)
         
-        if self.next_temp_id > self.global_max_temps:
-            self.global_max_temps = self.next_temp_id
+        if self.get_in_use_count() > self.global_max_temps:
+            self.global_max_temps = self.get_in_use_count()
         
         return temp_name
     
@@ -95,6 +98,7 @@ class TemporaryPool:
 class ScopedTemporaryManager:
     def __init__(self):
         self.pool = TemporaryPool()
+        self.expression_temps = []
     
     def new_temp(self) -> str:
         temp = self.pool.allocate()
