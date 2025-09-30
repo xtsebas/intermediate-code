@@ -157,6 +157,8 @@ En `program/` hay ejemplos (`program.cps`) y `Driver.py` para probar la gramáti
 
 ```bash
 python program/Driver.py program/program.cps
+o
+docker run --rm -ti -v "$(pwd)/program":/program -v "$(pwd)/compiler":/compiler csp-image
 ```
 
 ---
@@ -174,26 +176,3 @@ Cobertura:
 ```bash
 pytest --cov=compiler --cov-report=term-missing
 ```
-
----
-
-## CI (GitHub Actions)
-
-`/.github/workflows/ci.yml` ejecuta: instalación, generación ANTLR, lint y tests en cada push/PR. Ajustar matriz de Python según se requiera.
-
----
-
-## Cronograma
-
-El archivo de cronograma solicitado se encuentra en: `cronograma_codigo_intermedio.xlsx` con columnas:
-`fecha | owner | tarea | descripcion tarea | fecha limite | status`.
-
-Se ha planificado del **25/09** al **06/10**, asignando **Sebas (backend)** y **Josue (frontend)**, priorizando la generación de TAC con tripletos y la asignación de direcciones de memoria.
-
----
-
-## Convenciones de código
-
-- PEP8 + `ruff`/`black`.
-- Tipado gradual con `typing` donde sea útil.
-- Tests de unidad por cada categoría (expresiones, control, funciones, arreglos, errores).
