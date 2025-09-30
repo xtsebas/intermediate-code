@@ -1,22 +1,23 @@
-import argparse
 import sys
 import os
+from antlr4 import *
 
-sys.path.insert(0, os.path.dirname(__file__))
-
+# Configurar rutas
 current_dir = os.path.dirname(__file__)
+grammar_dir = os.path.join(current_dir, 'grammar', 'gen')
 parent_dir = os.path.dirname(current_dir)
-compiler_path = os.path.join(parent_dir, 'compiler')
 
+# Añadir rutas al path
+sys.path.insert(0, grammar_dir)
 sys.path.insert(0, parent_dir)
-sys.path.insert(0, compiler_path)
 
-from antlr4 import FileStream, CommonTokenStream
+# Imports de la gramática generada
 from CompiscriptLexer import CompiscriptLexer
 from CompiscriptParser import CompiscriptParser
-from ir.emitter import TripletEmitter
-from ir.triplet import Operand
-from codegen.expr_codegen import ExprCodeGen
+from grammar.CompiscriptVisitor import CompiscriptVisitor
+
+# Import del visitor TAC
+from compiler.syntax_tree.visitors import CompiscriptTACVisitor
 
 
 def print_separator(title=""):
@@ -30,8 +31,8 @@ def print_separator(title=""):
 
 def main(argv):
     if len(argv) < 2:
-        print("Uso: python3 Driver.py <archivo.cps>")
-        return 1
+        print("Usage: python Driver.py <source_file.cps>")
+        sys.exit(1)
     
     input_file = argv[1]
     
@@ -39,17 +40,18 @@ def main(argv):
     print(f"Archivo de entrada: {input_file}\n")
     
     try:
-        input_stream = FileStream(input_file, encoding='utf-8')
-        
+        # Fase 1: Análisis Léxico
         print_separator("FASE 1: ANALISIS LEXICO")
+        input_stream = FileStream(input_file, encoding='utf-8')
         lexer = CompiscriptLexer(input_stream)
         stream = CommonTokenStream(lexer)
         stream.fill()
         
         token_count = len(stream.tokens)
         print(f"Tokens reconocidos: {token_count}")
-        print("Analisis lexico completado exitosamente")
+        print("Análisis léxico completado exitosamente")
         
+        # Fase 2: Análisis Sintáctico
         print_separator("FASE 2: ANALISIS SINTACTICO")
         parser = CompiscriptParser(stream)
         tree = parser.program()
@@ -58,79 +60,42 @@ def main(argv):
             print(f"Errores de sintaxis: {parser.getNumberOfSyntaxErrors()}")
             return 1
         
-        print("Arbol sintactico generado exitosamente")
-        print("Analisis sintactico completado sin errores")
+        print("Árbol sintáctico generado exitosamente")
+        print("Análisis sintáctico completado sin errores")
         
+        # Fase 3: Generación de TAC
         print_separator("FASE 3: GENERACION DE CODIGO INTERMEDIO (TAC)")
         
-        emitter = TripletEmitter()
-        codegen = ExprCodeGen(emitter)
+        # Pasamos las clases Parser y Visitor como parámetros
+        visitor = CompiscriptTACVisitor(CompiscriptParser, CompiscriptVisitor)
+        visitor.visit(tree)
         
-        print("Generando ejemplos de codigo intermedio...\n")
+        # Mostrar tripletos generados
+        print("\n=== TRIPLETS GENERADOS ===")
+        triplets = visitor.get_triplets()
+        if triplets:
+            for i, triplet in enumerate(triplets):
+                print(f"{i:3}: {triplet}")
+        else:
+            print("No se generaron tripletos (archivo vacío o sin instrucciones)")
         
-        print("Ejemplo 1: Expresion aritmetica")
-        print("  Codigo: result = (5 + 3) * 2")
-        
-        const_5 = codegen.gen_literal(5)
-        const_3 = codegen.gen_literal(3)
-        const_2 = codegen.gen_literal(2)
-        
-        t1 = codegen.gen_binary_expr('+', const_5, const_3)
-        t2 = codegen.gen_binary_expr('*', t1, const_2)
-        codegen.gen_assignment('result', t2)
-        
-        print("\nTripletos generados:")
-        print(emitter.table)
-        print()
-        
-        emitter2 = TripletEmitter()
-        codegen2 = ExprCodeGen(emitter2)
-        
-        print("\nEjemplo 2: Expresion con comparacion")
-        print("  Codigo: flag = (x > 10) && (y < 20)")
-        
-        var_x = codegen2.gen_variable('x')
-        const_10 = codegen2.gen_literal(10)
-        var_y = codegen2.gen_variable('y')
-        const_20 = codegen2.gen_literal(20)
-        
-        t1 = codegen2.gen_binary_expr('>', var_x, const_10)
-        t2 = codegen2.gen_binary_expr('<', var_y, const_20)
-        t3 = codegen2.gen_binary_expr('&&', t1, t2)
-        codegen2.gen_assignment('flag', t3)
-        
-        print("\nTripletos generados:")
-        print(emitter2.table)
-        print()
-        
-        emitter3 = TripletEmitter()
-        codegen3 = ExprCodeGen(emitter3)
-        
-        print("\nEjemplo 3: Operador unario")
-        print("  Codigo: y = -(x + 5)")
-        
-        var_x = codegen3.gen_variable('x')
-        const_5 = codegen3.gen_literal(5)
-        
-        t1 = codegen3.gen_binary_expr('+', var_x, const_5)
-        t2 = codegen3.gen_unary_expr('-', t1)
-        codegen3.gen_assignment('y', t2)
-        
-        print("\nTripletos generados:")
-        print(emitter3.table)
-        
-        print_separator("ESTADISTICAS GENERALES")
-        stats = emitter.get_stats()
-        print(f"Total de tripletos (ej. 1): {stats['triplets_count']}")
-        print(f"Etiquetas generadas: {stats['labels_generated']}")
-        print(f"Temporales max simultaneos: {stats['temp_stats']['max_simultaneous']}")
+        # Mostrar tabla de símbolos
+        print("\n=== TABLA DE SIMBOLOS ===")
+        symbols = visitor.get_symbols()
+        if symbols:
+            for name, symbol in symbols.items():
+                print(f"  {name}: {symbol}")
+        else:
+            print("Tabla de símbolos vacía")
         
         print_separator("COMPILACION COMPLETADA")
-        print("NOTA: La integracion completa con el visitor del AST esta pendiente")
-        print("      Este driver muestra la generacion de TAC para expresiones")
+        print("Compilación completada exitosamente!")
         
         return 0
         
+    except FileNotFoundError:
+        print(f"Error: No se pudo encontrar el archivo '{input_file}'")
+        return 1
     except Exception as e:
         print_separator("ERROR")
         print(f"Error: {type(e).__name__}")
