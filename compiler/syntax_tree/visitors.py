@@ -620,14 +620,15 @@ class CompiscriptTACVisitor:
 
         # Obtener tipo de retorno
         return_type = "void"
-        if ctx.typeAnnotation():
-            type_ctx = ctx.typeAnnotation().type_()
-            if type_ctx:
-                return_type = type_ctx.getText()
+        if ctx.type_():
+            return_type = ctx.type_().getText()
 
         # Guardar scope anterior y entrar a scope de función
         prev_scope = self.current_scope
         self.current_scope = func_name
+
+        # Entrar en el contexto de función en el memory manager
+        self.memory_manager.enter_function(func_name, params)
 
         # Generar prólogo de función
         self.func_codegen.gen_function_prolog(func_name, params, return_type)
@@ -650,6 +651,9 @@ class CompiscriptTACVisitor:
 
         # Generar epílogo de función
         self.func_codegen.gen_function_epilog(func_name)
+
+        # Salir del contexto de función en el memory manager
+        self.memory_manager.exit_function()
 
         # Restaurar scope anterior
         self.current_scope = prev_scope
@@ -681,14 +685,13 @@ class CompiscriptTACVisitor:
         Visitor para llamada a función (expresión)
         Genera código PARAM para argumentos y CALL
         """
-        # Obtener nombre de función desde postfixExpr
+        # Obtener nombre de función desde el padre (leftHandSide)
         func_name = None
-        if ctx.postfixExpr():
-            postfix_ctx = ctx.postfixExpr()
-            if hasattr(postfix_ctx, 'primaryAtom') and postfix_ctx.primaryAtom():
-                primary = postfix_ctx.primaryAtom()
-                if hasattr(primary, 'Identifier') and primary.Identifier():
-                    func_name = primary.Identifier().getText()
+        parent = ctx.parentCtx
+        if parent and hasattr(parent, 'primaryAtom') and parent.primaryAtom():
+            primary = parent.primaryAtom()
+            if hasattr(primary, 'Identifier') and primary.Identifier():
+                func_name = primary.Identifier().getText()
 
         if not func_name:
             # Si no podemos obtener el nombre, retornar temporal vacío
@@ -742,15 +745,13 @@ class CompiscriptTACVisitor:
         Si está en lado izquierdo de asignación, solo retorna info para ARRAY_SET.
         Si está en expresión, genera ARRAY_GET.
         """
-        # Obtener la expresión base (el arreglo)
-        base_expr = self.visit(ctx.postfixExpr())
-
-        # Obtener el nombre del arreglo
+        # Obtener la expresión base (el arreglo) desde el padre
         array_name = None
-        if isinstance(base_expr, ExprResult):
-            array_name = base_expr.temp
-        elif isinstance(base_expr, str):
-            array_name = base_expr
+        parent = ctx.parentCtx
+        if parent and hasattr(parent, 'primaryAtom') and parent.primaryAtom():
+            primary = parent.primaryAtom()
+            if hasattr(primary, 'Identifier') and primary.Identifier():
+                array_name = primary.Identifier().getText()
 
         if not array_name:
             # Si no podemos determinar el arreglo, retornar temporal vacío

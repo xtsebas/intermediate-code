@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from typing import List, Optional, Dict
 from compiler.ir.triplet import OpCode, Operand
 from compiler.ir.emitter import TripletEmitter
@@ -5,7 +6,7 @@ from compiler.ir.triplet import func_operand, const_operand, var_operand, temp_o
 
 
 class FunctionInfo:
-    """Información de una función para generación de código"""
+    """Informacion de una funcion para generacion de codigo"""
     def __init__(self, name: str, params: List[str], return_type: str = "void"):
         self.name = name
         self.params = params
@@ -15,15 +16,15 @@ class FunctionInfo:
         self.stack_size = 0
 
     def add_local_var(self, var_name: str, size: int = 4):
-        """Agrega una variable local y actualiza el tamaño del stack"""
+        """Agrega una variable local y actualiza el tamano del stack"""
         self.local_vars.append(var_name)
         self.stack_size += size
 
     def get_param_offset(self, param_name: str) -> Optional[int]:
-        """Obtiene el offset de un parámetro en el stack"""
+        """Obtiene el offset de un parametro en el stack"""
         try:
             index = self.params.index(param_name)
-            # Los parámetros se pasan en orden inverso (convención)
+            # Los parametros se pasan en orden inverso (convencion)
             # Offset desde el frame pointer
             return 8 + (self.param_count - index - 1) * 4
         except ValueError:
@@ -34,7 +35,7 @@ class FunctionInfo:
 
 
 class FuncCodeGen:
-    """Generador de código para funciones y llamadas"""
+    """Generador de codigo para funciones y llamadas"""
 
     def __init__(self, emitter: TripletEmitter):
         self.emitter = emitter
@@ -44,19 +45,19 @@ class FuncCodeGen:
     def gen_function_prolog(self, func_name: str, params: List[str],
                            return_type: str = "void") -> None:
         """
-        Genera el prólogo de una función.
+        Genera el prologo de una funcion.
 
-        Prólogo incluye:
-        1. Etiqueta de inicio de función
-        2. ENTER con nombre de función y cantidad de parámetros
+        Prologo incluye:
+        1. Etiqueta de inicio de funcion
+        2. ENTER con nombre de funcion y cantidad de parametros
         3. Reserva de espacio para variables locales (si es necesario)
 
         Args:
-            func_name: Nombre de la función
-            params: Lista de nombres de parámetros
-            return_type: Tipo de retorno de la función
+            func_name: Nombre de la funcion
+            params: Lista de nombres de parametros
+            return_type: Tipo de retorno de la funcion
         """
-        # Crear información de la función
+        # Crear informacion de la funcion
         func_info = FunctionInfo(func_name, params, return_type)
         self.functions[func_name] = func_info
         self.current_function = func_info
@@ -65,7 +66,7 @@ class FuncCodeGen:
         func_label = self.emitter.new_label('func_start')
         self.emitter.emit_label(func_label)
 
-        # ENTER: Indica inicio de función con nombre y cantidad de parámetros
+        # ENTER: Indica inicio de funcion con nombre y cantidad de parametros
         # enter func_name, param_count
         self.emitter.emit(
             OpCode.ENTER,
@@ -74,13 +75,13 @@ class FuncCodeGen:
             comment=f"Prolog: {func_name}({', '.join(params)})"
         )
 
-        # Cargar parámetros a variables locales
-        # Los parámetros vienen del stack/registros según convención de llamada
+        # Cargar parametros a variables locales
+        # Los parametros vienen del stack/registros segun convencion de llamada
         for i, param in enumerate(params):
-            # Emitir instrucción para mover parámetro a variable local
+            # Emitir instruccion para mover parametro a variable local
             self.emitter.emit(
                 OpCode.MOV,
-                var_operand(f"param_{i}"),  # Fuente: parámetro pasado
+                var_operand(f"param_{i}"),  # Fuente: parametro pasado
                 None,
                 var_operand(param),  # Destino: variable local
                 comment=f"Load param {param}"
@@ -88,23 +89,23 @@ class FuncCodeGen:
 
     def gen_function_epilog(self, func_name: Optional[str] = None) -> None:
         """
-        Genera el epílogo de una función.
+        Genera el epilogo de una funcion.
 
-        Epílogo incluye:
-        1. EXIT con nombre de función
-        2. Etiqueta de fin de función
+        Epilogo incluye:
+        1. EXIT con nombre de funcion
+        2. Etiqueta de fin de funcion
         3. Limpieza del stack frame
 
         Args:
-            func_name: Nombre de la función (opcional, usa current_function si no se provee)
+            func_name: Nombre de la funcion (opcional, usa current_function si no se provee)
         """
         if func_name is None and self.current_function:
             func_name = self.current_function.name
 
         if not func_name:
-            raise ValueError("No hay función activa para generar epílogo")
+            raise ValueError("No hay funcion activa para generar epilogo")
 
-        # EXIT: Indica fin de función
+        # EXIT: Indica fin de funcion
         self.emitter.emit(
             OpCode.EXIT,
             func_operand(func_name),
@@ -115,18 +116,18 @@ class FuncCodeGen:
         end_label = self.emitter.new_label('func_end')
         self.emitter.emit_label(end_label)
 
-        # Limpiar función actual
+        # Limpiar funcion actual
         self.current_function = None
 
     def gen_return(self, value: Optional[Operand] = None) -> int:
         """
-        Genera código para retorno de función.
+        Genera codigo para retorno de funcion.
 
         Args:
             value: Valor a retornar (opcional para void functions)
 
         Returns:
-            Índice del triplet generado
+            Indice del triplet generado
         """
         if value is not None:
             # return value
@@ -144,15 +145,15 @@ class FuncCodeGen:
 
     def gen_param_push(self, args: List[Operand]) -> List[int]:
         """
-        Genera código para pasar parámetros por valor.
+        Genera codigo para pasar parametros por valor.
 
-        Los parámetros se pasan en el orden que se reciben.
+        Los parametros se pasan en el orden que se reciben.
 
         Args:
-            args: Lista de argumentos/parámetros a pasar
+            args: Lista de argumentos/parametros a pasar
 
         Returns:
-            Lista de índices de triplets generados
+            Lista de indices de triplets generados
         """
         triplet_indices = []
 
@@ -170,22 +171,22 @@ class FuncCodeGen:
     def gen_function_call(self, func_name: str, args: List[Operand],
                          result_var: Optional[str] = None) -> str:
         """
-        Genera código para llamada a función.
+        Genera codigo para llamada a funcion.
 
         Secuencia:
-        1. Pasar parámetros (PARAM para cada argumento)
-        2. CALL con nombre de función y cantidad de argumentos
+        1. Pasar parametros (PARAM para cada argumento)
+        2. CALL con nombre de funcion y cantidad de argumentos
         3. Almacenar resultado en temporal/variable
 
         Args:
-            func_name: Nombre de la función a llamar
+            func_name: Nombre de la funcion a llamar
             args: Lista de argumentos
             result_var: Variable donde almacenar resultado (opcional)
 
         Returns:
             Nombre del temporal/variable con el resultado
         """
-        # 1. Pasar parámetros
+        # 1. Pasar parametros
         self.gen_param_push(args)
 
         # 2. Determinar donde guardar el resultado
@@ -205,21 +206,21 @@ class FuncCodeGen:
         return result_var
 
     def get_function_info(self, func_name: str) -> Optional[FunctionInfo]:
-        """Obtiene información de una función definida"""
+        """Obtiene informacion de una funcion definida"""
         return self.functions.get(func_name)
 
     def add_local_var(self, var_name: str, size: int = 4):
-        """Agrega una variable local a la función actual"""
+        """Agrega una variable local a la funcion actual"""
         if self.current_function:
             self.current_function.add_local_var(var_name, size)
 
     def enter_function_scope(self, func_name: str) -> bool:
-        """Entra al scope de una función (para visitor)"""
+        """Entra al scope de una funcion (para visitor)"""
         if func_name in self.functions:
             self.current_function = self.functions[func_name]
             return True
         return False
 
     def exit_function_scope(self):
-        """Sale del scope de función actual"""
+        """Sale del scope de funcion actual"""
         self.current_function = None
