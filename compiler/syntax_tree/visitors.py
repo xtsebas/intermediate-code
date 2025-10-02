@@ -9,7 +9,8 @@ compiler_dir = os.path.dirname(os.path.dirname(current_dir))
 sys.path.insert(0, compiler_dir)
 
 from compiler.ir.emitter import TripletEmitter, BackpatchList
-from compiler.ir.triplet import OpCode
+from compiler.ir.triplet import OpCode, Operand, var_operand, const_operand, temp_operand
+from compiler.codegen.func_codegen import FuncCodeGen
 
 
 class SimpleSymbol:
@@ -92,6 +93,7 @@ class CompiscriptTACVisitor:
         self.symbol_table = SimpleSymbolTable()
         self.memory_model = SimpleMemoryModel()
         self.current_scope = "global"
+        self.func_codegen = FuncCodeGen(self.emitter)
     
     def visit(self, ctx):
         """Método genérico de visita que delega al método específico"""
@@ -614,5 +616,133 @@ class CompiscriptTACVisitor:
             temp = self.emitter.new_temp()
             self.emitter.emit(OpCode.MOV, "null", None, temp)
             return ExprResult(temp)
-        
+
         return ExprResult(self.emitter.new_temp())
+
+    def visitFunctionDeclaration(self, ctx):
+        """
+        Visitor para declaración de función
+        Genera prolog, procesa el cuerpo y genera epilog
+        """
+        # Obtener nombre de función
+        func_name = ctx.Identifier().getText()
+
+        # Obtener parámetros
+        params = []
+        if ctx.parameters():
+            param_list = ctx.parameters()
+            if hasattr(param_list, 'Identifier'):
+                # Obtener todos los identificadores de parámetros
+                for identifier in param_list.Identifier():
+                    params.append(identifier.getText())
+
+        # Obtener tipo de retorno
+        return_type = "void"
+        if ctx.typeAnnotation():
+            type_ctx = ctx.typeAnnotation().type_()
+            if type_ctx:
+                return_type = type_ctx.getText()
+
+        # Guardar scope anterior y entrar a scope de función
+        prev_scope = self.current_scope
+        self.current_scope = func_name
+
+        # Generar prólogo de función
+        self.func_codegen.gen_function_prolog(func_name, params, return_type)
+
+        # Entrar nuevo scope para variables locales
+        self.symbol_table.enter_scope()
+
+        # Registrar parámetros en tabla de símbolos
+        for param in params:
+            address = self.memory_model.allocate_local(4)
+            symbol = SimpleSymbol(param, "parameter", address)
+            self.symbol_table.insert(param, symbol)
+
+        # Procesar cuerpo de la función
+        if ctx.block():
+            self.visit(ctx.block())
+
+        # Salir del scope
+        self.symbol_table.exit_scope()
+
+        # Generar epílogo de función
+        self.func_codegen.gen_function_epilog(func_name)
+
+        # Restaurar scope anterior
+        self.current_scope = prev_scope
+
+        return None
+
+    def visitReturnStatement(self, ctx):
+        """
+        Visitor para statement de return
+        Genera código RETURN con valor opcional
+        """
+        if ctx.expression():
+            # Return con valor
+            expr_result = self.visit(ctx.expression())
+            if isinstance(expr_result, ExprResult):
+                self.func_codegen.gen_return(var_operand(expr_result.temp))
+            elif expr_result is not None:
+                self.func_codegen.gen_return(var_operand(str(expr_result)))
+            else:
+                self.func_codegen.gen_return()
+        else:
+            # Return void
+            self.func_codegen.gen_return()
+
+        return None
+
+    def visitCallExpr(self, ctx):
+        """
+        Visitor para llamada a función (expresión)
+        Genera código PARAM para argumentos y CALL
+        """
+        # Obtener nombre de función desde postfixExpr
+        func_name = None
+        if ctx.postfixExpr():
+            postfix_ctx = ctx.postfixExpr()
+            if hasattr(postfix_ctx, 'primaryAtom') and postfix_ctx.primaryAtom():
+                primary = postfix_ctx.primaryAtom()
+                if hasattr(primary, 'Identifier') and primary.Identifier():
+                    func_name = primary.Identifier().getText()
+
+        if not func_name:
+            # Si no podemos obtener el nombre, retornar temporal vacío
+            return ExprResult(self.emitter.new_temp())
+
+        # Procesar argumentos
+        args = []
+        if ctx.arguments():
+            arg_ctx = ctx.arguments()
+            if hasattr(arg_ctx, 'expression'):
+                # Puede ser una lista o un método
+                expressions = arg_ctx.expression() if callable(arg_ctx.expression) else [arg_ctx.expression]
+                for expr in expressions:
+                    expr_result = self.visit(expr)
+                    if isinstance(expr_result, ExprResult):
+                        args.append(var_operand(expr_result.temp))
+                    elif expr_result is not None:
+                        args.append(var_operand(str(expr_result)))
+
+        # Generar llamada a función
+        result_temp = self.func_codegen.gen_function_call(func_name, args)
+
+        return ExprResult(result_temp)
+
+    def visitPostfixExpr(self, ctx):
+        """
+        Visitor para expresiones postfix
+        Maneja llamadas a función y acceso a propiedades
+        """
+        # Si es una llamada (tiene paréntesis con argumentos)
+        if ctx.arguments():
+            return self.visitCallExpr(ctx)
+
+        # Si no, visitar el átomo primario
+        if ctx.primaryAtom():
+            return self.visit(ctx.primaryAtom())
+
+        # Visitar hijos por defecto
+        return self.visitChildren(ctx)
