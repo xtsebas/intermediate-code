@@ -87,7 +87,20 @@ def main(argv):
                 print(f"  {name}: {symbol}")
         else:
             print("Tabla de símbolos vacía")
-        
+
+        # Mostrar layout de memoria (direcciones efectivas)
+        print("\n=== LAYOUT DE MEMORIA ===")
+        visitor.memory_manager.print_memory_layout()
+
+        # Mostrar información de arreglos
+        print("\n=== ARREGLOS DECLARADOS ===")
+        arrays = visitor.array_codegen.get_all_arrays()
+        if arrays:
+            for name, array_info in arrays.items():
+                print(f"  {name}: {array_info}")
+        else:
+            print("No hay arreglos declarados")
+
         print_separator("COMPILACION COMPLETADA")
         print("Compilación completada exitosamente!")
         

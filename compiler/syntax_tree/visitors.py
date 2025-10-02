@@ -11,6 +11,8 @@ sys.path.insert(0, compiler_dir)
 from compiler.ir.emitter import TripletEmitter, BackpatchList
 from compiler.ir.triplet import OpCode, Operand, var_operand, const_operand, temp_operand
 from compiler.codegen.func_codegen import FuncCodeGen
+from compiler.codegen.array_codegen import ArrayCodeGen
+from compiler.symtab.memory_model import MemoryManager
 
 
 class SimpleSymbol:
@@ -93,7 +95,11 @@ class CompiscriptTACVisitor:
         self.symbol_table = SimpleSymbolTable()
         self.memory_model = SimpleMemoryModel()
         self.current_scope = "global"
+
+        # Generadores de código especializados
         self.func_codegen = FuncCodeGen(self.emitter)
+        self.memory_manager = MemoryManager()
+        self.array_codegen = ArrayCodeGen(self.emitter, self.memory_manager)
     
     def visit(self, ctx):
         """Método genérico de visita que delega al método específico"""
@@ -152,30 +158,6 @@ class CompiscriptTACVisitor:
         self.symbol_table.exit_scope()
         return None
     
-    def visitVariableDeclaration(self, ctx):
-        var_name = ctx.Identifier().getText()
-        var_type = "integer"
-        if ctx.typeAnnotation():
-            type_ctx = ctx.typeAnnotation().type_()
-            if type_ctx:
-                var_type = type_ctx.getText()
-        
-        if self.current_scope == "global":
-            address = self.memory_model.allocate_global(4)
-        else:
-            address = self.memory_model.allocate_local(4)
-        
-        symbol = SimpleSymbol(var_name, var_type, address)
-        self.symbol_table.insert(var_name, symbol)
-        
-        if ctx.initializer():
-            expr_result = self.visit(ctx.initializer().expression())
-            if isinstance(expr_result, ExprResult):
-                self.emitter.emit_assignment(var_name, expr_result.temp)
-            elif expr_result is not None:
-                self.emitter.emit_assignment(var_name, expr_result)
-        
-        return None
     
     def visitConstantDeclaration(self, ctx):
         var_name = ctx.Identifier().getText()
@@ -746,3 +728,225 @@ class CompiscriptTACVisitor:
 
         # Visitar hijos por defecto
         return self.visitChildren(ctx)
+
+    def visitIndexExpr(self, ctx):
+        """
+        Visitor para acceso por índice a arreglo: array[index]
+
+        Genera código para:
+        1. Evaluar el array (base)
+        2. Evaluar el índice
+        3. Calcular dirección efectiva
+        4. Acceder al elemento
+
+        Si está en lado izquierdo de asignación, solo retorna info para ARRAY_SET.
+        Si está en expresión, genera ARRAY_GET.
+        """
+        # Obtener la expresión base (el arreglo)
+        base_expr = self.visit(ctx.postfixExpr())
+
+        # Obtener el nombre del arreglo
+        array_name = None
+        if isinstance(base_expr, ExprResult):
+            array_name = base_expr.temp
+        elif isinstance(base_expr, str):
+            array_name = base_expr
+
+        if not array_name:
+            # Si no podemos determinar el arreglo, retornar temporal vacío
+            return ExprResult(self.emitter.new_temp())
+
+        # Evaluar el índice
+        index_expr = self.visit(ctx.expression())
+        index_temp = index_expr.temp if isinstance(index_expr, ExprResult) else str(index_expr)
+
+        # Generar acceso al arreglo con direcciones efectivas
+        # Verificar si el arreglo está registrado en array_codegen
+        array_info = self.array_codegen.get_array_info(array_name)
+
+        if array_info:
+            # Si está registrado, usar el generador de código de arreglos
+            result_temp = self.array_codegen.gen_array_access(
+                array_name,
+                index_temp,
+                check_bounds=True
+            )
+        else:
+            # Si no está registrado (puede ser un arreglo de parámetro o dinámico)
+            # Usar las instrucciones básicas del emitter
+            result_temp = self.emitter.new_temp()
+
+            # Calcular dirección efectiva manualmente
+            # Asumir tamaño de elemento = 4 (enteros)
+            t_offset = self.emitter.new_temp()
+            self.emitter.emit(
+                OpCode.MUL,
+                var_operand(index_temp),
+                const_operand(4),  # element_size por defecto
+                temp_operand(t_offset),
+                comment=f"Offset for {array_name}[index]"
+            )
+
+            # Acceso básico
+            self.emitter.emit(
+                OpCode.ARRAY_GET,
+                var_operand(array_name),
+                temp_operand(t_offset),
+                temp_operand(result_temp),
+                comment=f"Load {array_name}[index]"
+            )
+
+        return ExprResult(result_temp)
+
+    def visitArrayLiteral(self, ctx):
+        """
+        Visitor para literal de arreglo: [1, 2, 3, 4]
+
+        Genera código para:
+        1. Asignar memoria para el arreglo
+        2. Inicializar cada elemento
+        """
+        # Obtener todas las expresiones del literal
+        expressions = ctx.expression() if hasattr(ctx, 'expression') else []
+
+        if not expressions:
+            # Arreglo vacío
+            array_size = 0
+        elif callable(expressions):
+            expressions = expressions()
+            array_size = len(expressions) if isinstance(expressions, list) else 1
+        else:
+            array_size = len(expressions) if isinstance(expressions, list) else 1
+
+        # Generar un nombre temporal para el arreglo literal
+        array_temp = self.emitter.new_temp()
+
+        # Asignar el arreglo (tipo integer por defecto)
+        is_global = (self.current_scope == "global")
+
+        if array_size > 0:
+            array_info = self.array_codegen.gen_array_allocation(
+                array_temp,
+                "integer",
+                array_size,
+                is_global=is_global
+            )
+
+            # Inicializar cada elemento
+            expr_list = expressions if isinstance(expressions, list) else [expressions]
+            for i, expr_ctx in enumerate(expr_list):
+                # Evaluar la expresión
+                expr_result = self.visit(expr_ctx)
+                expr_temp = expr_result.temp if isinstance(expr_result, ExprResult) else str(expr_result)
+
+                # Asignar al índice i
+                self.array_codegen.gen_array_assignment(
+                    array_temp,
+                    const_operand(i),
+                    var_operand(expr_temp),
+                    check_bounds=False  # No necesitamos bounds check en literales
+                )
+        else:
+            # Arreglo vacío - solo asignar con tamaño 0
+            self.emitter.emit(
+                OpCode.ARRAY_ALLOC,
+                const_operand(0),
+                const_operand(4),
+                temp_operand(array_temp),
+                comment="Empty array literal"
+            )
+
+        return ExprResult(array_temp)
+
+    def visitVariableDeclaration(self, ctx):
+        """
+        Visitor sobrescrito para manejar declaraciones de arreglos.
+
+        Ejemplos:
+        - var x: integer;
+        - var arr: integer[10];
+        """
+        var_name = ctx.Identifier().getText()
+        var_type = "integer"
+        is_array = False
+        array_size = 0
+
+        # Obtener tipo y verificar si es arreglo
+        if ctx.typeAnnotation():
+            type_ctx = ctx.typeAnnotation().type_()
+            if type_ctx:
+                # Obtener el tipo base
+                if hasattr(type_ctx, 'baseType') and type_ctx.baseType():
+                    var_type = type_ctx.baseType().getText()
+                else:
+                    var_type = type_ctx.getText()
+
+                # Verificar si tiene corchetes (es un arreglo)
+                type_text = type_ctx.getText()
+                if '[' in type_text and ']' in type_text:
+                    is_array = True
+                    # Intentar extraer el tamaño del arreglo
+                    # Por ahora, asumiremos tamaño dinámico o de inicializador
+
+        # Determinar si es global o local
+        is_global = (self.current_scope == "global")
+
+        # Si hay inicializador, procesarlo
+        if ctx.initializer():
+            expr_result = self.visit(ctx.initializer().expression())
+
+            # Verificar si el inicializador es un array literal
+            if isinstance(expr_result, ExprResult):
+                init_temp = expr_result.temp
+
+                # Si es un arreglo, copiar la información
+                if is_array or self.array_codegen.get_array_info(init_temp):
+                    # El inicializador es un arreglo
+                    # Simplemente asignar la referencia
+                    symbol = SimpleSymbol(var_name, "array", 0)
+                    self.symbol_table.insert(var_name, symbol)
+
+                    self.emitter.emit(
+                        OpCode.MOV,
+                        temp_operand(init_temp),
+                        None,
+                        var_operand(var_name),
+                        comment=f"Assign array {init_temp} to {var_name}"
+                    )
+                else:
+                    # Inicializador normal (no array)
+                    if is_global:
+                        address = self.memory_model.allocate_global(4)
+                    else:
+                        address = self.memory_model.allocate_local(4)
+
+                    symbol = SimpleSymbol(var_name, var_type, address)
+                    self.symbol_table.insert(var_name, symbol)
+                    self.emitter.emit_assignment(var_name, init_temp)
+        else:
+            # Sin inicializador
+            if is_array:
+                # Declaración de arreglo sin inicializador
+                # Necesitamos un tamaño (usar 0 por defecto o error)
+                array_size = 10  # Tamaño por defecto
+
+                self.array_codegen.gen_array_allocation(
+                    var_name,
+                    var_type,
+                    array_size,
+                    is_global=is_global
+                )
+
+                symbol = SimpleSymbol(var_name, "array", 0)
+                self.symbol_table.insert(var_name, symbol)
+            else:
+                # Variable normal
+                if is_global:
+                    address = self.memory_model.allocate_global(4)
+                else:
+                    address = self.memory_model.allocate_local(4)
+
+                symbol = SimpleSymbol(var_name, var_type, address)
+                self.symbol_table.insert(var_name, symbol)
+
+        return None
