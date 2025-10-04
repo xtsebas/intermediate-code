@@ -146,20 +146,17 @@ def main():
             st.rerun()
 
         st.markdown("---")
-    # Main content area
-    col1, col2 = st.columns([1, 1])
+    # Main content area - Editor de Código
+    st.header("📝 Editor de Código")
 
-    with col1:
-        st.header(" Editor de Código")
-
-        # Code editor with enhanced styling
-        code = st.text_area(
-            "Código Compiscript:",
-            value=st.session_state.code_content,
-            height=500,
-            key="code_editor",
-            help="Contenido del archivo .cps cargado o escriba código manualmente",
-            placeholder="""// Ejemplo de código Compiscript
+    # Code editor with enhanced styling
+    code = st.text_area(
+        "Código Compiscript:",
+        value=st.session_state.code_content,
+        height=500,
+        key="code_editor",
+        help="Contenido del archivo .cps cargado o escriba código manualmente",
+        placeholder="""// Ejemplo de código Compiscript
 var a = 5;
 var b = 10;
 var result = a + b * 2;
@@ -171,31 +168,22 @@ fun factorial(n) {
     }
     return n * factorial(n - 1);
 }"""
-        )
+    )
 
-        # Update session state when text changes
-        if code != st.session_state.code_content:
-            st.session_state.code_content = code
-            st.session_state.compiled = False
+    # Update session state when text changes
+    if code != st.session_state.code_content:
+        st.session_state.code_content = code
+        st.session_state.compiled = False
 
-    with col2:
-        st.header(" Información del Código")
+    # Code statistics
+    lines = len(code.split('\n'))
+    chars = len(code)
+    words = len(code.split())
 
-        # Code statistics
-        lines = len(code.split('\n'))
-        chars = len(code)
-        words = len(code.split())
-
-        col2a, col2b, col2c = st.columns(3)
-        col2a.metric("Líneas", lines)
-        col2b.metric("Caracteres", chars)
-        col2c.metric("Palabras", words)
-
-        st.markdown("###  Vista Previa")
-        if code.strip():
-            st.code(code, language="c")  # C-like syntax highlighting for Compiscript
-        else:
-            st.info("El editor está vacío. Cargue un archivo .cps o escriba código.")
+    col_stat1, col_stat2, col_stat3 = st.columns(3)
+    col_stat1.metric("Líneas", lines)
+    col_stat2.metric("Caracteres", chars)
+    col_stat3.metric("Palabras", words)
 
     # Compilation trigger
     if compile_button and code.strip():
