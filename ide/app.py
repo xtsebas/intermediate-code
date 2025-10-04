@@ -1,6 +1,94 @@
 import streamlit as st
 from datetime import datetime
 import io
+import sys
+import os
+from antlr4 import *
+
+# Configurar rutas para importar el compilador
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+program_dir = os.path.join(parent_dir, 'program')
+grammar_dir = os.path.join(program_dir, 'grammar', 'gen')
+
+# Añadir al path
+if grammar_dir not in sys.path:
+    sys.path.insert(0, grammar_dir)
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+
+# Imports de la gramática generada
+from CompiscriptLexer import CompiscriptLexer
+from CompiscriptParser import CompiscriptParser
+from program.grammar.CompiscriptVisitor import CompiscriptVisitor
+
+# Import del visitor TAC
+from compiler.syntax_tree.visitors import CompiscriptTACVisitor
+
+def compile_code(source_code):
+    """Compile Compiscript code and return results"""
+    try:
+        # Fase 1: Análisis Léxico
+        input_stream = InputStream(source_code)
+        lexer = CompiscriptLexer(input_stream)
+        stream = CommonTokenStream(lexer)
+        stream.fill()
+
+        token_count = len(stream.tokens)
+
+        # Fase 2: Análisis Sintáctico
+        parser = CompiscriptParser(stream)
+        tree = parser.program()
+
+        if parser.getNumberOfSyntaxErrors() > 0:
+            return {
+                'success': False,
+                'errors': [f'Errores de sintaxis: {parser.getNumberOfSyntaxErrors()}'],
+                'triplets': [],
+                'symbols': {},
+                'memory': {},
+                'arrays': {}
+            }
+
+        # Fase 3: Generación de TAC
+        visitor = CompiscriptTACVisitor(CompiscriptParser, CompiscriptVisitor)
+        visitor.visit(tree)
+
+        # Recolectar resultados
+        triplets = visitor.get_triplets()
+        symbols = visitor.get_symbols()
+
+        # Obtener información de memoria
+        memory_layout = visitor.memory_manager.get_memory_layout()
+        memory_info = {
+            'global_size': memory_layout['global_segment']['total_size'],
+            'constant_size': memory_layout['const_segment']['total_size'],
+            'current_function': memory_layout['current_function'],
+            'stack_depth': memory_layout['activation_stack_depth']
+        }
+
+        # Obtener información de arreglos
+        arrays = visitor.array_codegen.get_all_arrays()
+
+        return {
+            'success': True,
+            'errors': [],
+            'token_count': token_count,
+            'triplets': triplets,
+            'symbols': symbols,
+            'memory': memory_info,
+            'arrays': arrays
+        }
+
+    except Exception as e:
+        return {
+            'success': False,
+            'errors': [f'{type(e).__name__}: {str(e)}'],
+            'triplets': [],
+            'symbols': {},
+            'memory': {},
+            'arrays': {}
+        }
 
 def init_session_state():
     """Initialize session state variables"""
@@ -10,10 +98,8 @@ def init_session_state():
         st.session_state.code_content = ""
     if 'filename' not in st.session_state:
         st.session_state.filename = None
-    if 'compilation_errors' not in st.session_state:
-        st.session_state.compilation_errors = []
-    if 'compilation_warnings' not in st.session_state:
-        st.session_state.compilation_warnings = []
+    if 'compilation_result' not in st.session_state:
+        st.session_state.compilation_result = None
 
 def main():
     st.set_page_config(
@@ -60,17 +146,6 @@ def main():
             st.rerun()
 
         st.markdown("---")
-
-        st.header(" Estado de Compilación")
-        if st.session_state.filename:
-            st.info(f"📄 Archivo: {st.session_state.filename}")
-
-        if st.session_state.compiled:
-            st.success("✅ Listo para compilar")
-            st.info(f"🕐 {datetime.now().strftime('%H:%M:%S')}")
-        else:
-            st.warning("⏳ Sin compilar")
-
     # Main content area
     col1, col2 = st.columns([1, 1])
 
@@ -124,13 +199,72 @@ fun factorial(n) {
 
     # Compilation trigger
     if compile_button and code.strip():
-        with st.spinner(" Compilando..."):
-            # TODO: Aquí se integrará con el compilador real
+        with st.spinner("🔄 Compilando..."):
+            result = compile_code(code)
+            st.session_state.compilation_result = result
             st.session_state.compiled = True
-        st.success(" Listo para compilar - Integración pendiente")
-        st.info("El botón de compilar está preparado para conectarse con el compilador.")
+
+        if result['success']:
+            st.success(f"✅ Compilación exitosa - {result.get('token_count', 0)} tokens reconocidos")
+        else:
+            st.error("❌ Error de compilación")
+            for error in result['errors']:
+                st.error(error)
+
     elif compile_button and not code.strip():
-        st.error(" No hay código para compilar. Cargue un archivo .cps o escriba código.")
+        st.error("⚠️ No hay código para compilar. Cargue un archivo .cps o escriba código.")
+
+    # Mostrar resultados de compilación
+    if st.session_state.compilation_result and st.session_state.compiled:
+        result = st.session_state.compilation_result
+
+        st.markdown("---")
+        st.header("📊 Resultados de Compilación")
+
+        # Tabs para organizar resultados
+        tab1, tab2, tab3, tab4 = st.tabs(["📝 Triplets TAC", "🔤 Tabla de Símbolos", "💾 Memoria", "📦 Arreglos"])
+
+        with tab1:
+            st.subheader("Triplets de Código Intermedio (TAC)")
+            if result['triplets']:
+                triplet_text = ""
+                for i, triplet in enumerate(result['triplets']):
+                    triplet_text += f"{i:3}: {triplet}\n"
+                st.code(triplet_text, language="asm")
+                st.info(f"Total de triplets: {len(result['triplets'])}")
+            else:
+                st.warning("No se generaron triplets")
+
+        with tab2:
+            st.subheader("Tabla de Símbolos")
+            if result['symbols']:
+                for name, symbol in result['symbols'].items():
+                    st.text(f"{name}: {symbol}")
+                st.info(f"Total de símbolos: {len(result['symbols'])}")
+            else:
+                st.warning("Tabla de símbolos vacía")
+
+        with tab3:
+            st.subheader("Layout de Memoria")
+            if result['memory']:
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric("Segmento Global", f"{result['memory'].get('global_size', 0)} bytes")
+                    st.metric("Segmento Constantes", f"{result['memory'].get('constant_size', 0)} bytes")
+                with col2:
+                    st.metric("Función Actual", result['memory'].get('current_function', 'None'))
+                    st.metric("Profundidad Stack", result['memory'].get('stack_depth', 0))
+            else:
+                st.warning("Sin información de memoria")
+
+        with tab4:
+            st.subheader("Arreglos Declarados")
+            if result['arrays']:
+                for name, array_info in result['arrays'].items():
+                    st.text(f"{name}: {array_info}")
+                st.info(f"Total de arreglos: {len(result['arrays'])}")
+            else:
+                st.warning("No hay arreglos declarados")
 
 if __name__ == "__main__":
     main()
