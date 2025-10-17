@@ -101,17 +101,36 @@ class CompiscriptTACVisitor:
         self.memory_manager = MemoryManager()
         self.array_codegen = ArrayCodeGen(self.emitter, self.memory_manager)
     
+    def _get_default_value(self, var_type: str) -> str:
+        """
+        Retorna el valor por defecto para un tipo dado.
+        Usado para inicializar variables sin inicializador explícito.
+        """
+        # Extraer el tipo base (sin corchetes de array)
+        base_type = var_type.split('[')[0].strip()
+
+        default_values = {
+            'integer': '0',
+            'string': '""',
+            'boolean': 'undefined',
+            'void': 'null',
+            'number': '0',
+            'any': 'null'
+        }
+
+        return default_values.get(base_type, 'undefined')
+
     def visit(self, ctx):
         """Método genérico de visita que delega al método específico"""
         if ctx is None:
             return None
-        
+
         # Obtenemos el nombre de la clase del contexto
         class_name = ctx.__class__.__name__
-        
+
         # Construimos el nombre del método visitor
         visitor_method_name = f'visit{class_name[:-7]}'  # Removemos 'Context'
-        
+
         # Buscamos el método correspondiente
         visitor = getattr(self, visitor_method_name, None)
         if visitor:
@@ -166,17 +185,28 @@ class CompiscriptTACVisitor:
             type_ctx = ctx.typeAnnotation().type_()
             if type_ctx:
                 var_type = type_ctx.getText()
-        
+
         address = self.memory_model.allocate_global(4)
         symbol = SimpleSymbol(var_name, var_type, address)
         self.symbol_table.insert(var_name, symbol)
-        
-        expr_result = self.visit(ctx.expression())
-        if isinstance(expr_result, ExprResult):
-            self.emitter.emit_assignment(var_name, expr_result.temp)
-        elif expr_result is not None:
-            self.emitter.emit_assignment(var_name, expr_result)
-        
+
+        # SIEMPRE generar tripleto de inicialización
+        if ctx.expression():
+            # Tiene inicializador explícito
+            expr_result = self.visit(ctx.expression())
+            if isinstance(expr_result, ExprResult):
+                self.emitter.emit_assignment(var_name, expr_result.temp)
+            elif expr_result is not None:
+                self.emitter.emit_assignment(var_name, expr_result)
+            else:
+                # Si la expresión no retorna nada, usar valor por defecto
+                default_value = self._get_default_value(var_type)
+                self.emitter.emit_assignment(var_name, default_value)
+        else:
+            # Sin inicializador, asignar valor por defecto
+            default_value = self._get_default_value(var_type)
+            self.emitter.emit_assignment(var_name, default_value)
+
         return None
     
     def visitAssignment(self, ctx):
@@ -924,6 +954,27 @@ class CompiscriptTACVisitor:
                     symbol = SimpleSymbol(var_name, var_type, address)
                     self.symbol_table.insert(var_name, symbol)
                     self.emitter.emit_assignment(var_name, init_temp)
+            elif expr_result is not None:
+                # expr_result es un valor directo (string, número, etc.)
+                if is_global:
+                    address = self.memory_model.allocate_global(4)
+                else:
+                    address = self.memory_model.allocate_local(4)
+
+                symbol = SimpleSymbol(var_name, var_type, address)
+                self.symbol_table.insert(var_name, symbol)
+                self.emitter.emit_assignment(var_name, expr_result)
+            else:
+                # Si la expresión no retorna nada, usar valor por defecto
+                if is_global:
+                    address = self.memory_model.allocate_global(4)
+                else:
+                    address = self.memory_model.allocate_local(4)
+
+                symbol = SimpleSymbol(var_name, var_type, address)
+                self.symbol_table.insert(var_name, symbol)
+                default_value = self._get_default_value(var_type)
+                self.emitter.emit_assignment(var_name, default_value)
         else:
             # Sin inicializador
             if is_array:
@@ -941,7 +992,7 @@ class CompiscriptTACVisitor:
                 symbol = SimpleSymbol(var_name, "array", 0)
                 self.symbol_table.insert(var_name, symbol)
             else:
-                # Variable normal
+                # Variable normal sin inicializador - asignar valor por defecto
                 if is_global:
                     address = self.memory_model.allocate_global(4)
                 else:
@@ -949,5 +1000,9 @@ class CompiscriptTACVisitor:
 
                 symbol = SimpleSymbol(var_name, var_type, address)
                 self.symbol_table.insert(var_name, symbol)
+
+                # Generar triplet de inicialización por defecto
+                default_value = self._get_default_value(var_type)
+                self.emitter.emit_assignment(var_name, default_value)
 
         return None

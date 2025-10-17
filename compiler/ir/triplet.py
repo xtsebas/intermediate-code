@@ -107,32 +107,28 @@ class Triplet:
     def __str__(self) -> str:
         if self.op == OpCode.LABEL:
             return f"{self.arg1}:"
-        
+
         parts = []
-        
-        
+
         if self.result:
             parts.append(f"{self.result} = ")
-        
-        
+
         parts.append(self.op.value)
-        
-        
+
         args = []
         if self.arg1:
             args.append(str(self.arg1))
         if self.arg2:
             args.append(str(self.arg2))
-        
+
         if args:
             parts.append(f" {', '.join(args)}")
-        
+
         result = "".join(parts)
-        
-        
+
         if self.comment:
-            result += f" # {self.comment}" 
-        
+            result += f" # {self.comment}"
+
         return result
     
     def __repr__(self) -> str:
