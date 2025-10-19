@@ -68,10 +68,10 @@ class TripletEmitter:
         self.function_params: Dict[str, List[str]] = {}
     
     def emit(self, op: OpCode, 
-             arg1: Optional[Union[str, int, float, bool, Operand]] = None,
-             arg2: Optional[Union[str, int, float, bool, Operand]] = None,
-             result: Optional[Union[str, Operand]] = None,
-             comment: Optional[str] = None) -> int:
+            arg1: Optional[Union[str, int, float, bool, Operand]] = None,
+            arg2: Optional[Union[str, int, float, bool, Operand]] = None,
+            result: Optional[Union[str, Operand]] = None,
+            comment: Optional[str] = None) -> int:
         if arg1 is not None and not isinstance(arg1, Operand):
             if isinstance(arg1, (int, float, bool)):
                 arg1 = const_operand(arg1)
@@ -87,7 +87,7 @@ class TripletEmitter:
         if result is not None and not isinstance(result, Operand):
             result = var_operand(str(result))
         
-        triplet = Triplet(op, arg1, arg2, result, comment)
+        triplet = Triplet(op, arg1, arg2, result, None)
         return self.table.add(triplet)
     
     def emit_label(self, label_name: str) -> int:

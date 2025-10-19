@@ -43,80 +43,41 @@ class FuncCodeGen:
         self.current_function: Optional[FunctionInfo] = None
 
     def gen_function_prolog(self, func_name: str, params: List[str],
-                           return_type: str = "void") -> None:
-        """
-        Genera el prologo de una funcion.
-
-        Prologo incluye:
-        1. Etiqueta de inicio de funcion
-        2. ENTER con nombre de funcion y cantidad de parametros
-        3. Reserva de espacio para variables locales (si es necesario)
-
-        Args:
-            func_name: Nombre de la funcion
-            params: Lista de nombres de parametros
-            return_type: Tipo de retorno de la funcion
-        """
-        # Crear informacion de la funcion
+                       return_type: str = "void") -> None:
         func_info = FunctionInfo(func_name, params, return_type)
         self.functions[func_name] = func_info
         self.current_function = func_info
 
-        # Generar etiqueta de inicio
         func_label = self.emitter.new_label('func_start')
         self.emitter.emit_label(func_label)
 
-        # ENTER: Indica inicio de funcion con nombre y cantidad de parametros
-        # enter func_name, param_count
+        # BeginFunc con tamaño estimado del frame
+        frame_size = len(params) * 4 + 32  # params + espacio para locales
         self.emitter.emit(
             OpCode.ENTER,
-            func_operand(func_name),
-            const_operand(len(params)),
-            comment=f"Prolog: {func_name}({', '.join(params)})"
+            const_operand(frame_size),
+            None,
+            None
         )
 
-        # Cargar parametros a variables locales
-        # Los parametros vienen del stack/registros segun convencion de llamada
-        for i, param in enumerate(params):
-            # Emitir instruccion para mover parametro a variable local
-            self.emitter.emit(
-                OpCode.MOV,
-                var_operand(f"param_{i}"),  # Fuente: parametro pasado
-                None,
-                var_operand(param),  # Destino: variable local
-                comment=f"Load param {param}"
-            )
-
     def gen_function_epilog(self, func_name: Optional[str] = None) -> None:
-        """
-        Genera el epilogo de una funcion.
-
-        Epilogo incluye:
-        1. EXIT con nombre de funcion
-        2. Etiqueta de fin de funcion
-        3. Limpieza del stack frame
-
-        Args:
-            func_name: Nombre de la funcion (opcional, usa current_function si no se provee)
-        """
         if func_name is None and self.current_function:
             func_name = self.current_function.name
 
         if not func_name:
-            raise ValueError("No hay funcion activa para generar epilogo")
+            raise ValueError("No hay función activa para generar epilog")
 
-        # EXIT: Indica fin de funcion
+        # EndFunc simple
         self.emitter.emit(
             OpCode.EXIT,
-            func_operand(func_name),
-            comment=f"Epilog: {func_name}"
+            None,
+            None,
+            None
         )
 
-        # Generar etiqueta de fin
         end_label = self.emitter.new_label('func_end')
         self.emitter.emit_label(end_label)
 
-        # Limpiar funcion actual
         self.current_function = None
 
     def gen_return(self, value: Optional[Operand] = None) -> int:
@@ -144,65 +105,52 @@ class FuncCodeGen:
             )
 
     def gen_param_push(self, args: List[Operand]) -> List[int]:
-        """
-        Genera codigo para pasar parametros por valor.
-
-        Los parametros se pasan en el orden que se reciben.
-
-        Args:
-            args: Lista de argumentos/parametros a pasar
-
-        Returns:
-            Lista de indices de triplets generados
-        """
         triplet_indices = []
 
         for i, arg in enumerate(args):
-            # param arg
             index = self.emitter.emit(
                 OpCode.PARAM,
                 arg,
-                comment=f"Push param {i}: {arg}"
+                None,
+                None,
+                comment=f"Push param {i}"
             )
             triplet_indices.append(index)
 
         return triplet_indices
 
     def gen_function_call(self, func_name: str, args: List[Operand],
-                         result_var: Optional[str] = None) -> str:
-        """
-        Genera codigo para llamada a funcion.
-
-        Secuencia:
-        1. Pasar parametros (PARAM para cada argumento)
-        2. CALL con nombre de funcion y cantidad de argumentos
-        3. Almacenar resultado en temporal/variable
-
-        Args:
-            func_name: Nombre de la funcion a llamar
-            args: Lista de argumentos
-            result_var: Variable donde almacenar resultado (opcional)
-
-        Returns:
-            Nombre del temporal/variable con el resultado
-        """
-        # 1. Pasar parametros
-        self.gen_param_push(args)
-
-        # 2. Determinar donde guardar el resultado
+                     result_var: Optional[str] = None) -> str:
+        # Generar PARAM para cada argumento
+        for i, arg in enumerate(args):
+            if isinstance(arg, str):
+                # Es un temporal o variable
+                self.emitter.emit(
+                    OpCode.PARAM,
+                    arg,
+                    None,
+                    None
+                )
+            else:
+                self.emitter.emit(
+                    OpCode.PARAM,
+                    str(arg),
+                    None,
+                    None
+                )
+        
+        # Crear temporal para el resultado si no se proporciona
         if result_var is None:
             result_var = self.emitter.new_temp()
-
-        # 3. Generar CALL
-        # call func_name, arg_count -> result
+        
+        # Generar CALL
         self.emitter.emit(
             OpCode.CALL,
-            func_operand(func_name),
-            const_operand(len(args)),
-            temp_operand(result_var) if not result_var.startswith('_') else var_operand(result_var),
-            comment=f"Call {func_name}({len(args)} args)"
+            func_name,
+            len(args),
+            result_var
         )
-
+        
         return result_var
 
     def get_function_info(self, func_name: str) -> Optional[FunctionInfo]:

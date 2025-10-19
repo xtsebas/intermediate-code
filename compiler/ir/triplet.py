@@ -43,8 +43,8 @@ class OpCode(Enum):
     CALL = "call"        
     RETURN = "return"    
     PARAM = "param"      
-    ENTER = "enter"      
-    EXIT = "exit"        
+    ENTER = "BeginFunc"      
+    EXIT = "EndFunc"        
     
     
     ARRAY_GET = "array_get"  
@@ -110,6 +110,13 @@ class Triplet:
 
         parts = []
 
+        # Para BeginFunc y EndFunc, formato especial
+        if self.op == OpCode.ENTER:
+            return f"BeginFunc {self.arg1};"
+        
+        if self.op == OpCode.EXIT:
+            return "EndFunc;"
+
         if self.result:
             parts.append(f"{self.result} = ")
 
@@ -124,12 +131,7 @@ class Triplet:
         if args:
             parts.append(f" {', '.join(args)}")
 
-        result = "".join(parts)
-
-        if self.comment:
-            result += f" # {self.comment}"
-
-        return result
+        return "".join(parts)
     
     def __repr__(self) -> str:
         return f"Triplet({self.op}, {self.arg1}, {self.arg2}, {self.result})"
@@ -197,14 +199,28 @@ class TripletTable:
         return [triplet.to_dict() for triplet in self.triplets]
     
     def __str__(self) -> str:
-        if not self.triplets:
-            return "Tabla de tripletos vacía"
-        
-        lines = ["Tabla de Tripletos:", "=" * 50]
-        for i, triplet in enumerate(self.triplets):
-            lines.append(f"{i:3d}: {triplet}")
-        
-        return "\n".join(lines)
+        if self.op == OpCode.LABEL:
+            return f"{self.arg1}:"
+
+        parts = []
+
+        if self.result:
+            parts.append(f"{self.result} = ")
+
+        parts.append(self.op.value)
+
+        args = []
+        if self.arg1:
+            args.append(str(self.arg1))
+        if self.arg2:
+            args.append(str(self.arg2))
+
+        if args:
+            parts.append(f" {', '.join(args)}")
+
+        result = "".join(parts)
+
+        return result
     
     def __len__(self) -> int:
         return len(self.triplets)
