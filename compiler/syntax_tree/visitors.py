@@ -20,6 +20,7 @@ class SimpleSymbol:
         self.name = name
         self.sym_type = sym_type
         self.address = address
+        self.temp = None  # Agregar campo para temporal asociado
     
     def __repr__(self):
         return f"Symbol({self.name}, {self.sym_type}, addr={self.address})"
@@ -95,6 +96,9 @@ class CompiscriptTACVisitor:
         self.symbol_table = SimpleSymbolTable()
         self.memory_model = SimpleMemoryModel()
         self.current_scope = "global"
+        
+        # Agregar diccionario para mapeo de parámetros a temporales
+        self.param_temps = {}
 
         # Generadores de código especializados
         self.func_codegen = FuncCodeGen(self.emitter)
@@ -444,13 +448,14 @@ class CompiscriptTACVisitor:
         
         left_result = self.visit(ctx.multiplicativeExpr(0))
         
-        # Si no es ExprResult, crear uno
+        # Asegurar que tenemos un ExprResult válido con temporal
         if not isinstance(left_result, ExprResult):
             if left_result is None:
                 left_temp = self.emitter.new_temp()
+                self.emitter.emit(OpCode.MOV, "0", None, temp_operand(left_temp))
             else:
                 left_temp = self.emitter.new_temp()
-                self.emitter.emit(OpCode.MOV, str(left_result), None, left_temp)
+                self.emitter.emit(OpCode.MOV, str(left_result), None, temp_operand(left_temp))
             left_result = ExprResult(left_temp)
         
         left_temp = left_result.temp
@@ -462,18 +467,19 @@ class CompiscriptTACVisitor:
             if not isinstance(right_result, ExprResult):
                 if right_result is None:
                     right_temp = self.emitter.new_temp()
+                    self.emitter.emit(OpCode.MOV, "0", None, temp_operand(right_temp))
                 else:
                     right_temp = self.emitter.new_temp()
-                    self.emitter.emit(OpCode.MOV, str(right_result), None, right_temp)
+                    self.emitter.emit(OpCode.MOV, str(right_result), None, temp_operand(right_temp))
                 right_result = ExprResult(right_temp)
             
             right_temp = right_result.temp
             result_temp = self.emitter.new_temp()
             
             if op_text == '+':
-                self.emitter.emit(OpCode.ADD, left_temp, right_temp, result_temp)
+                self.emitter.emit(OpCode.ADD, temp_operand(left_temp), temp_operand(right_temp), temp_operand(result_temp))
             elif op_text == '-':
-                self.emitter.emit(OpCode.SUB, left_temp, right_temp, result_temp)
+                self.emitter.emit(OpCode.SUB, temp_operand(left_temp), temp_operand(right_temp), temp_operand(result_temp))
             
             left_temp = result_temp
         
@@ -575,21 +581,21 @@ class CompiscriptTACVisitor:
         if ctx.Literal():
             value = ctx.Literal().getText()
             temp = self.emitter.new_temp()
-            self.emitter.emit(OpCode.MOV, value, None, temp)
+            self.emitter.emit(OpCode.MOV, const_operand(value), None, temp_operand(temp))
             return ExprResult(temp)
         elif ctx.arrayLiteral():
             return self.visit(ctx.arrayLiteral())
         elif ctx.getText() == 'null':
             temp = self.emitter.new_temp()
-            self.emitter.emit(OpCode.MOV, 'null', None, temp)
+            self.emitter.emit(OpCode.MOV, const_operand('null'), None, temp_operand(temp))
             return ExprResult(temp)
         elif ctx.getText() == 'true':
             temp = self.emitter.new_temp()
-            self.emitter.emit(OpCode.MOV, 'true', None, temp)
+            self.emitter.emit(OpCode.MOV, const_operand('true'), None, temp_operand(temp))
             return ExprResult(temp)
         elif ctx.getText() == 'false':
             temp = self.emitter.new_temp()
-            self.emitter.emit(OpCode.MOV, 'false', None, temp)
+            self.emitter.emit(OpCode.MOV, const_operand('false'), None, temp_operand(temp))
             return ExprResult(temp)
         
         temp = self.emitter.new_temp()
@@ -753,35 +759,45 @@ class CompiscriptTACVisitor:
         return left_result
     
     def visitPrimaryAtom(self, ctx):
-        temp = self.emitter.new_temp()
-        
         if ctx.Integer():
             value = ctx.Integer().getText()
-            print(f"DEBUG: Integer {value} -> {temp}")  # DEBUG
-            self.emitter.emit(OpCode.MOV, value, None, temp)
+            temp = self.emitter.new_temp()
+            self.emitter.emit(OpCode.MOV, const_operand(value), None, temp_operand(temp))
             return ExprResult(temp)
         elif ctx.String():
             value = ctx.String().getText()
-            print(f"DEBUG: String {value} -> {temp}")  # DEBUG
-            self.emitter.emit(OpCode.MOV, value, None, temp)
+            temp = self.emitter.new_temp()
+            self.emitter.emit(OpCode.MOV, const_operand(value), None, temp_operand(temp))
             return ExprResult(temp)
         elif ctx.Identifier():
             var_name = ctx.Identifier().getText()
-            print(f"DEBUG: Identifier {var_name} -> {temp}")  # DEBUG
-            self.emitter.emit(OpCode.MOV, var_name, None, temp)
+            
+            # Primero verificar si es un parámetro con temporal mapeado
+            if var_name in self.param_temps:
+                # Usar directamente el temporal del parámetro
+                return ExprResult(self.param_temps[var_name])
+            
+            # Si no es parámetro, generar MOV para cargar la variable
+            temp = self.emitter.new_temp()
+            self.emitter.emit(OpCode.MOV, var_operand(var_name), None, temp_operand(temp))
             return ExprResult(temp)
+            
         elif ctx.expression():
             return self.visit(ctx.expression())
         elif ctx.getText() == 'true':
-            self.emitter.emit(OpCode.MOV, 'true', None, temp)
+            temp = self.emitter.new_temp()
+            self.emitter.emit(OpCode.MOV, const_operand('true'), None, temp_operand(temp))
             return ExprResult(temp)
         elif ctx.getText() == 'false':
-            self.emitter.emit(OpCode.MOV, 'false', None, temp)
+            temp = self.emitter.new_temp()
+            self.emitter.emit(OpCode.MOV, const_operand('false'), None, temp_operand(temp))
             return ExprResult(temp)
         elif ctx.getText() == 'null':
-            self.emitter.emit(OpCode.MOV, 'null', None, temp)
+            temp = self.emitter.new_temp()
+            self.emitter.emit(OpCode.MOV, const_operand('null'), None, temp_operand(temp))
             return ExprResult(temp)
 
+        temp = self.emitter.new_temp()
         return ExprResult(temp)
 
     def visitFunctionDeclaration(self, ctx):
@@ -790,9 +806,15 @@ class CompiscriptTACVisitor:
         params = []
         if ctx.parameters():
             param_list = ctx.parameters()
-            if hasattr(param_list, 'Identifier'):
-                for identifier in param_list.Identifier():
-                    params.append(identifier.getText())
+            if hasattr(param_list, 'parameter'):
+                param_contexts = param_list.parameter()
+                if not isinstance(param_contexts, list):
+                    param_contexts = [param_contexts]
+                for param_ctx in param_contexts:
+                    if hasattr(param_ctx, 'Identifier'):
+                        param_id = param_ctx.Identifier()
+                        if param_id:
+                            params.append(param_id.getText())
 
         return_type = "void"
         if ctx.type_():
@@ -802,28 +824,37 @@ class CompiscriptTACVisitor:
         self.current_scope = func_name
 
         self.memory_manager.enter_function(func_name, params)
-
         self.func_codegen.gen_function_prolog(func_name, params, return_type)
-
         self.symbol_table.enter_scope()
 
-        # Registrar parámetros en la tabla de símbolos SIN generar MOV
+        # Mapeo de parámetros a temporales
+        self.param_temps = {}  # Agregar este diccionario al inicio de la clase si no existe
+        
+        # Generar MOV para cada parámetro
         for i, param in enumerate(params):
             address = self.memory_model.allocate_local(4)
             symbol = SimpleSymbol(param, "parameter", address)
+            
+            # Generar temporal y MOV
+            temp = self.emitter.new_temp()
+            self.emitter.emit(OpCode.MOV, var_operand(param), None, temp_operand(temp))
+            
+            # Guardar el mapeo parámetro -> temporal
+            self.param_temps[param] = temp
+            symbol.temp = temp
             self.symbol_table.insert(param, symbol)
 
         if ctx.block():
             self.visit(ctx.block())
 
         self.symbol_table.exit_scope()
-
         self.func_codegen.gen_function_epilog(func_name)
-
         self.memory_manager.exit_function()
-
+        
+        # Limpiar mapeo de parámetros
+        self.param_temps = {}
+        
         self.current_scope = prev_scope
-
         return None
 
     def visitReturnStatement(self, ctx):
@@ -871,7 +902,7 @@ class CompiscriptTACVisitor:
         if not func_name:
             return ExprResult(self.emitter.new_temp())
 
-        # Procesar argumentos
+        # Procesar argumentos y generar PARAM para cada uno
         args = []
         if ctx.arguments():
             arg_ctx = ctx.arguments()
@@ -881,19 +912,27 @@ class CompiscriptTACVisitor:
                     expressions = [expressions]
                 
                 for expr in expressions:
-                    # Visitar la expresión para que genere el MOV si es necesario
                     expr_result = self.visit(expr)
                     
                     if isinstance(expr_result, ExprResult):
+                        # Emitir PARAM directamente con el temporal
+                        self.emitter.emit(OpCode.PARAM, temp_operand(expr_result.temp))
                         args.append(expr_result.temp)
                     else:
-                        # Si no es ExprResult, crear uno
+                        # Si no es ExprResult, crear temporal y emitir PARAM
                         temp = self.emitter.new_temp()
                         self.emitter.emit(OpCode.MOV, str(expr_result), None, temp)
+                        self.emitter.emit(OpCode.PARAM, temp_operand(temp))
                         args.append(temp)
 
-        # Generar la llamada a función con los argumentos procesados
-        result_temp = self.func_codegen.gen_function_call(func_name, args)
+        # Generar CALL con el número de argumentos
+        result_temp = self.emitter.new_temp()
+        self.emitter.emit(
+            OpCode.CALL,
+            var_operand(func_name),
+            const_operand(len(args)),
+            temp_operand(result_temp)
+        )
 
         return ExprResult(result_temp)
 
@@ -1041,13 +1080,6 @@ class CompiscriptTACVisitor:
         return ExprResult(array_temp)
 
     def visitVariableDeclaration(self, ctx):
-        """
-        Visitor sobrescrito para manejar declaraciones de arreglos.
-
-        Ejemplos:
-        - var x: integer;
-        - var arr: integer[10];
-        """
         var_name = ctx.Identifier().getText()
         var_type = "integer"
         is_array = False
@@ -1067,8 +1099,6 @@ class CompiscriptTACVisitor:
                 type_text = type_ctx.getText()
                 if '[' in type_text and ']' in type_text:
                     is_array = True
-                    # Intentar extraer el tamaño del arreglo
-                    # Por ahora, asumiremos tamaño dinámico o de inicializador
 
         # Determinar si es global o local
         is_global = (self.current_scope == "global")
@@ -1078,34 +1108,7 @@ class CompiscriptTACVisitor:
             expr_result = self.visit(ctx.initializer().expression())
 
             if isinstance(expr_result, ExprResult):
-                init_temp = expr_result.temp
-                
-                # Si es un arreglo, copiar la referencia
-                if is_array or self.array_codegen.get_array_info(init_temp):
-                    symbol = SimpleSymbol(var_name, "array", 0)
-                    self.symbol_table.insert(var_name, symbol)
-
-                    self.emitter.emit(
-                        OpCode.MOV,
-                        init_temp,
-                        None,
-                        var_name
-                    )
-                else:
-                    # Inicializador normal
-                    if is_global:
-                        address = self.memory_model.allocate_global(4)
-                    else:
-                        address = self.memory_model.allocate_local(4)
-
-                    symbol = SimpleSymbol(var_name, var_type, address)
-                    self.symbol_table.insert(var_name, symbol)
-                    self.emitter.emit(OpCode.MOV, init_temp, None, var_name)
-            elif expr_result is not None:
-                # expr_result es un valor directo
-                temp = self.emitter.new_temp()
-                self.emitter.emit(OpCode.MOV, str(expr_result), None, temp)
-                
+                # Asignar dirección de memoria
                 if is_global:
                     address = self.memory_model.allocate_global(4)
                 else:
@@ -1113,6 +1116,17 @@ class CompiscriptTACVisitor:
 
                 symbol = SimpleSymbol(var_name, var_type, address)
                 self.symbol_table.insert(var_name, symbol)
-                self.emitter.emit(OpCode.MOV, temp, None, var_name)
+                
+                # Generar MOV desde el temporal al nombre de variable
+                self.emitter.emit(OpCode.MOV, temp_operand(expr_result.temp), None, var_operand(var_name))
+        else:
+            # Sin inicializador
+            if is_global:
+                address = self.memory_model.allocate_global(4)
+            else:
+                address = self.memory_model.allocate_local(4)
+
+            symbol = SimpleSymbol(var_name, var_type, address)
+            self.symbol_table.insert(var_name, symbol)
 
         return None
