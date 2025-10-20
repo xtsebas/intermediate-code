@@ -110,7 +110,6 @@ class Triplet:
 
         parts = []
 
-        # Para BeginFunc y EndFunc, formato especial
         if self.op == OpCode.ENTER:
             return f"BeginFunc {self.arg1};"
         

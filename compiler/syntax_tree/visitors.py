@@ -448,14 +448,18 @@ class CompiscriptTACVisitor:
         
         left_result = self.visit(ctx.multiplicativeExpr(0))
         
-        # Asegurar que tenemos un ExprResult válido con temporal
-        if not isinstance(left_result, ExprResult):
+        # Manejar si left_result es un string (nombre de variable)
+        if isinstance(left_result, str):
+            left_temp = self.emitter.new_temp()
+            self.emitter.emit(OpCode.MOV, var_operand(left_result), None, temp_operand(left_temp))
+            left_result = ExprResult(left_temp)
+        elif not isinstance(left_result, ExprResult):
             if left_result is None:
                 left_temp = self.emitter.new_temp()
-                self.emitter.emit(OpCode.MOV, "0", None, temp_operand(left_temp))
+                self.emitter.emit(OpCode.MOV, const_operand(0), None, temp_operand(left_temp))
             else:
                 left_temp = self.emitter.new_temp()
-                self.emitter.emit(OpCode.MOV, str(left_result), None, temp_operand(left_temp))
+                self.emitter.emit(OpCode.MOV, const_operand(left_result), None, temp_operand(left_temp))
             left_result = ExprResult(left_temp)
         
         left_temp = left_result.temp
@@ -464,13 +468,18 @@ class CompiscriptTACVisitor:
             op_text = ctx.getChild(2 * i - 1).getText()
             right_result = self.visit(ctx.multiplicativeExpr(i))
             
-            if not isinstance(right_result, ExprResult):
+            # Manejar si right_result es un string (nombre de variable)
+            if isinstance(right_result, str):
+                right_temp = self.emitter.new_temp()
+                self.emitter.emit(OpCode.MOV, var_operand(right_result), None, temp_operand(right_temp))
+                right_result = ExprResult(right_temp)
+            elif not isinstance(right_result, ExprResult):
                 if right_result is None:
                     right_temp = self.emitter.new_temp()
-                    self.emitter.emit(OpCode.MOV, "0", None, temp_operand(right_temp))
+                    self.emitter.emit(OpCode.MOV, const_operand(0), None, temp_operand(right_temp))
                 else:
                     right_temp = self.emitter.new_temp()
-                    self.emitter.emit(OpCode.MOV, str(right_result), None, temp_operand(right_temp))
+                    self.emitter.emit(OpCode.MOV, const_operand(right_result), None, temp_operand(right_temp))
                 right_result = ExprResult(right_temp)
             
             right_temp = right_result.temp
@@ -491,13 +500,18 @@ class CompiscriptTACVisitor:
         
         left_result = self.visit(ctx.unaryExpr(0))
         
-        # Si no es ExprResult, crear uno
+        # CAMBIO AQUÍ: Asegurar ExprResult válido
         if not isinstance(left_result, ExprResult):
             if left_result is None:
                 left_temp = self.emitter.new_temp()
+                self.emitter.emit(OpCode.MOV, const_operand(0), None, temp_operand(left_temp))
             else:
                 left_temp = self.emitter.new_temp()
-                self.emitter.emit(OpCode.MOV, str(left_result), None, left_temp)
+                # CORRECCIÓN: usar const_operand para valores literales
+                if isinstance(left_result, (int, float, str, bool)):
+                    self.emitter.emit(OpCode.MOV, const_operand(left_result), None, temp_operand(left_temp))
+                else:
+                    self.emitter.emit(OpCode.MOV, var_operand(str(left_result)), None, temp_operand(left_temp))
             left_result = ExprResult(left_temp)
         
         left_temp = left_result.temp
@@ -506,24 +520,29 @@ class CompiscriptTACVisitor:
             op_text = ctx.getChild(2 * i - 1).getText()
             right_result = self.visit(ctx.unaryExpr(i))
             
-            # Si no es ExprResult, crear uno
+            # CAMBIO AQUÍ: Asegurar ExprResult válido
             if not isinstance(right_result, ExprResult):
                 if right_result is None:
                     right_temp = self.emitter.new_temp()
+                    self.emitter.emit(OpCode.MOV, const_operand(0), None, temp_operand(right_temp))
                 else:
                     right_temp = self.emitter.new_temp()
-                    self.emitter.emit(OpCode.MOV, str(right_result), None, right_temp)
+                    # CORRECCIÓN: usar const_operand para valores literales
+                    if isinstance(right_result, (int, float, str, bool)):
+                        self.emitter.emit(OpCode.MOV, const_operand(right_result), None, temp_operand(right_temp))
+                    else:
+                        self.emitter.emit(OpCode.MOV, var_operand(str(right_result)), None, temp_operand(right_temp))
                 right_result = ExprResult(right_temp)
             
             right_temp = right_result.temp
             result_temp = self.emitter.new_temp()
             
             if op_text == '*':
-                self.emitter.emit(OpCode.MUL, left_temp, right_temp, result_temp)
+                self.emitter.emit(OpCode.MUL, temp_operand(left_temp), temp_operand(right_temp), temp_operand(result_temp))
             elif op_text == '/':
-                self.emitter.emit(OpCode.DIV, left_temp, right_temp, result_temp)
+                self.emitter.emit(OpCode.DIV, temp_operand(left_temp), temp_operand(right_temp), temp_operand(result_temp))
             elif op_text == '%':
-                self.emitter.emit(OpCode.MOD, left_temp, right_temp, result_temp)
+                self.emitter.emit(OpCode.MOD, temp_operand(left_temp), temp_operand(right_temp), temp_operand(result_temp))
             
             left_temp = result_temp
         
@@ -604,27 +623,78 @@ class CompiscriptTACVisitor:
     def visitLeftHandSide(self, ctx):
         primary_result = self.visit(ctx.primaryAtom())
         
-        # Asegurar que siempre retorna ExprResult
-        if not isinstance(primary_result, ExprResult):
-            if primary_result is None:
-                temp = self.emitter.new_temp()
-                return ExprResult(temp)
-            # Si es un string, convertirlo a ExprResult
-            temp = self.emitter.new_temp()
-            self.emitter.emit(OpCode.MOV, str(primary_result), None, temp)
-            return ExprResult(temp)
-        
+        # Verificar si hay suffixOp (llamadas, índices, propiedades)
         suffix_ops = list(ctx.suffixOp()) if ctx.suffixOp() else []
         
         if len(suffix_ops) == 0:
             return primary_result
         
+        # Procesar cada suffixOp en orden
+        current_result = primary_result
         for suffix in suffix_ops:
-            suffix_result = self.visit(suffix)
-            if suffix_result and isinstance(suffix_result, ExprResult):
-                return suffix_result
+            # Determinar tipo de suffix
+            if suffix.arguments():  # Es una llamada: func()
+                # Obtener nombre de función del primary_result
+                if isinstance(current_result, ExprResult):
+                    # El resultado anterior es un temporal, necesitamos el nombre original
+                    # Buscar en primaryAtom
+                    if ctx.primaryAtom().Identifier():
+                        func_name = ctx.primaryAtom().Identifier().getText()
+                    else:
+                        func_name = None
+                else:
+                    func_name = str(current_result)
+                
+                if func_name:
+                    # Procesar argumentos
+                    args = []
+                    arg_ctx = suffix.arguments()
+                    if hasattr(arg_ctx, 'expression'):
+                        expressions = arg_ctx.expression() if callable(arg_ctx.expression) else [arg_ctx.expression]
+                        if not isinstance(expressions, list):
+                            expressions = [expressions]
+                        
+                        for expr in expressions:
+                            expr_result = self.visit(expr)
+                            
+                            # Asegurar que tenemos un temporal
+                            if isinstance(expr_result, ExprResult):
+                                arg_temp = expr_result.temp
+                            elif isinstance(expr_result, (int, str, float, bool)):
+                                arg_temp = self.emitter.new_temp()
+                                self.emitter.emit(OpCode.MOV, const_operand(expr_result), None, temp_operand(arg_temp))
+                            else:
+                                arg_temp = self.emitter.new_temp()
+                                self.emitter.emit(OpCode.MOV, var_operand(str(expr_result)), None, temp_operand(arg_temp))
+                            
+                            args.append(arg_temp)
+                    
+                    # Emitir PARAM para cada argumento
+                    for arg_temp in args:
+                        self.emitter.emit(OpCode.PARAM, temp_operand(arg_temp), None, None)
+                    
+                    # Generar CALL
+                    result_temp = self.emitter.new_temp()
+                    self.emitter.emit(
+                        OpCode.CALL,
+                        var_operand(func_name),
+                        const_operand(len(args)),
+                        temp_operand(result_temp)
+                    )
+                    
+                    current_result = ExprResult(result_temp)
+            
+            elif suffix.expression():  # Es indexación: arr[index]
+                suffix_result = self.visit(suffix)
+                if isinstance(suffix_result, ExprResult):
+                    current_result = suffix_result
+            
+            elif suffix.Identifier():  # Es acceso a propiedad: obj.prop
+                suffix_result = self.visit(suffix)
+                if isinstance(suffix_result, ExprResult):
+                    current_result = suffix_result
         
-        return primary_result
+        return current_result
     
     def visitRelationalExpr(self, ctx):
         if ctx.getChildCount() == 1:
@@ -772,15 +842,13 @@ class CompiscriptTACVisitor:
         elif ctx.Identifier():
             var_name = ctx.Identifier().getText()
             
-            # Primero verificar si es un parámetro con temporal mapeado
+            # Verificar si es parámetro
             if var_name in self.param_temps:
-                # Usar directamente el temporal del parámetro
                 return ExprResult(self.param_temps[var_name])
             
-            # Si no es parámetro, generar MOV para cargar la variable
-            temp = self.emitter.new_temp()
-            self.emitter.emit(OpCode.MOV, var_operand(var_name), None, temp_operand(temp))
-            return ExprResult(temp)
+            # NO generar MOV aquí si viene un suffixOp después (será una llamada)
+            # Retornar el nombre directamente
+            return var_name  # CAMBIO CLAVE
             
         elif ctx.expression():
             return self.visit(ctx.expression())
@@ -827,19 +895,17 @@ class CompiscriptTACVisitor:
         self.func_codegen.gen_function_prolog(func_name, params, return_type)
         self.symbol_table.enter_scope()
 
-        # Mapeo de parámetros a temporales
-        self.param_temps = {}  # Agregar este diccionario al inicio de la clase si no existe
+        self.param_temps = {}
         
-        # Generar MOV para cada parámetro
+        # CAMBIO AQUÍ: Generar MOV explícito para cada parámetro
         for i, param in enumerate(params):
             address = self.memory_model.allocate_local(4)
             symbol = SimpleSymbol(param, "parameter", address)
             
-            # Generar temporal y MOV
+            # Generar temporal y MOV EXPLÍCITO desde el parámetro
             temp = self.emitter.new_temp()
             self.emitter.emit(OpCode.MOV, var_operand(param), None, temp_operand(temp))
             
-            # Guardar el mapeo parámetro -> temporal
             self.param_temps[param] = temp
             symbol.temp = temp
             self.symbol_table.insert(param, symbol)
@@ -851,7 +917,6 @@ class CompiscriptTACVisitor:
         self.func_codegen.gen_function_epilog(func_name)
         self.memory_manager.exit_function()
         
-        # Limpiar mapeo de parámetros
         self.param_temps = {}
         
         self.current_scope = prev_scope
@@ -876,7 +941,7 @@ class CompiscriptTACVisitor:
         func_name = None
         parent = ctx.parentCtx
         
-        # Navegar hacia arriba para encontrar el identificador de la función
+        # Buscar el nombre de la función
         current = parent
         while current:
             if hasattr(current, 'primaryAtom') and callable(current.primaryAtom):
@@ -902,7 +967,7 @@ class CompiscriptTACVisitor:
         if not func_name:
             return ExprResult(self.emitter.new_temp())
 
-        # Procesar argumentos y generar PARAM para cada uno
+        # Procesar argumentos
         args = []
         if ctx.arguments():
             arg_ctx = ctx.arguments()
@@ -914,18 +979,23 @@ class CompiscriptTACVisitor:
                 for expr in expressions:
                     expr_result = self.visit(expr)
                     
+                    # Asegurar que tenemos un temporal
                     if isinstance(expr_result, ExprResult):
-                        # Emitir PARAM directamente con el temporal
-                        self.emitter.emit(OpCode.PARAM, temp_operand(expr_result.temp))
-                        args.append(expr_result.temp)
+                        arg_temp = expr_result.temp
+                    elif isinstance(expr_result, (int, str, float, bool)):
+                        arg_temp = self.emitter.new_temp()
+                        self.emitter.emit(OpCode.MOV, const_operand(expr_result), None, temp_operand(arg_temp))
                     else:
-                        # Si no es ExprResult, crear temporal y emitir PARAM
-                        temp = self.emitter.new_temp()
-                        self.emitter.emit(OpCode.MOV, str(expr_result), None, temp)
-                        self.emitter.emit(OpCode.PARAM, temp_operand(temp))
-                        args.append(temp)
+                        arg_temp = self.emitter.new_temp()
+                        self.emitter.emit(OpCode.MOV, var_operand(str(expr_result)), None, temp_operand(arg_temp))
+                    
+                    args.append(arg_temp)
 
-        # Generar CALL con el número de argumentos
+        # Emitir PARAM para cada argumento
+        for arg_temp in args:
+            self.emitter.emit(OpCode.PARAM, temp_operand(arg_temp), None, None)
+
+        # Generar CALL
         result_temp = self.emitter.new_temp()
         self.emitter.emit(
             OpCode.CALL,
@@ -1085,40 +1155,43 @@ class CompiscriptTACVisitor:
         is_array = False
         array_size = 0
 
-        # Obtener tipo y verificar si es arreglo
+        # Obtener tipo
         if ctx.typeAnnotation():
             type_ctx = ctx.typeAnnotation().type_()
             if type_ctx:
-                # Obtener el tipo base
                 if hasattr(type_ctx, 'baseType') and type_ctx.baseType():
                     var_type = type_ctx.baseType().getText()
                 else:
                     var_type = type_ctx.getText()
 
-                # Verificar si tiene corchetes (es un arreglo)
                 type_text = type_ctx.getText()
                 if '[' in type_text and ']' in type_text:
                     is_array = True
 
-        # Determinar si es global o local
         is_global = (self.current_scope == "global")
 
-        # Si hay inicializador, procesarlo
+        # CAMBIO CRÍTICO: Procesar el inicializador ANTES de asignar memoria
         if ctx.initializer():
             expr_result = self.visit(ctx.initializer().expression())
 
-            if isinstance(expr_result, ExprResult):
-                # Asignar dirección de memoria
-                if is_global:
-                    address = self.memory_model.allocate_global(4)
-                else:
-                    address = self.memory_model.allocate_local(4)
+            # Asignar memoria
+            if is_global:
+                address = self.memory_model.allocate_global(4)
+            else:
+                address = self.memory_model.allocate_local(4)
 
-                symbol = SimpleSymbol(var_name, var_type, address)
-                self.symbol_table.insert(var_name, symbol)
-                
+            symbol = SimpleSymbol(var_name, var_type, address)
+            self.symbol_table.insert(var_name, symbol)
+            
+            # CAMBIO AQUÍ: Asegurar que expr_result tiene un temporal válido
+            if isinstance(expr_result, ExprResult):
                 # Generar MOV desde el temporal al nombre de variable
                 self.emitter.emit(OpCode.MOV, temp_operand(expr_result.temp), None, var_operand(var_name))
+            elif expr_result is not None:
+                # Si no es ExprResult, crear temporal primero
+                temp = self.emitter.new_temp()
+                self.emitter.emit(OpCode.MOV, const_operand(str(expr_result)), None, temp_operand(temp))
+                self.emitter.emit(OpCode.MOV, temp_operand(temp), None, var_operand(var_name))
         else:
             # Sin inicializador
             if is_global:
