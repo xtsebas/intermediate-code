@@ -242,6 +242,7 @@ class TripletEmitter:
         self.table.clear()
         self.label_gen.reset()
         self.temp_manager.clear()
+        self.temp_manager.pool.next_temp_id = 0  
         self.pending_patches.clear()
         self.break_stack.clear()
         self.continue_stack.clear()

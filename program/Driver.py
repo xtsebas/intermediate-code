@@ -79,14 +79,8 @@ def main(argv):
         else:
             print("No se generaron tripletos (archivo vacío o sin instrucciones)")
         
-        # Mostrar tabla de símbolos
-        print("\n=== TABLA DE SIMBOLOS ===")
-        symbols = visitor.get_symbols()
-        if symbols:
-            for name, symbol in symbols.items():
-                print(f"  {name}: {symbol}")
-        else:
-            print("Tabla de símbolos vacía")
+        # Mostrar tabla de símbolos mejorada
+        visitor.print_symbol_table()
 
         # Mostrar layout de memoria (direcciones efectivas)
         print("\n=== LAYOUT DE MEMORIA ===")

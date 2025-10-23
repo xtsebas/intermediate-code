@@ -51,6 +51,7 @@ class Symbol:
     is_array: bool = False
     array_dimensions: List[int] = field(default_factory=list)
     is_reference: bool = False  # parámetros por referencia
+    base_type: str = ""  # Tipo base para arreglos (ej: "integer" para "integer[]")
     
     # Para funciones
     parameters: List[str] = field(default_factory=list)
@@ -94,10 +95,18 @@ class Symbol:
         """Verifica si es una clase"""
         return self.kind == SymbolKind.CLASS
     
+    def get_display_type(self) -> str:
+        """Retorna el tipo con formato de arreglo si aplica"""
+        if self.is_array and self.array_dimensions:
+            dims = "".join([f"[{d}]" for d in self.array_dimensions])
+            return f"{self.symbol_type}{dims}"
+        return self.symbol_type
+
     def to_dict(self) -> dict:
         return {
             "name": self.name,
             "type": self.symbol_type,
+            "display_type": self.get_display_type(),
             "kind": self.kind.value,
             "scope": self.scope.value,
             "address": self.address.to_dict() if self.address else None,
@@ -357,22 +366,23 @@ class SymbolTable:
     
     def print_symbols(self):
         print("=== TABLA DE SÍMBOLOS EXTENDIDA ===")
-        
+
         for env_id, env in self.env_manager.environments.items():
             print(f"\n--- AMBIENTE: {env_id} (nivel {env.level}) ---")
-            
+
             if not env.symbols:
                 print("  (vacío)")
                 continue
-                
+
+            print(f"  {'Nombre':15} | {'Tipo':20} | {'Clase':10} | {'Dirección':10} | {'Inicializado':12} | {'Tamaño':8}")
+            print("  " + "-" * 90)
+
             for name, symbol in env.symbols.items():
                 addr_str = str(symbol.address) if symbol.address else "sin dirección"
-                init_str = "✓" if symbol.is_initialized else "✗"
-                access_info = f"offset:{symbol.offset}"
-                if symbol.access_link:
-                    access_info += f", link:{symbol.access_link}"
-                
-                print(f"  {name:15} | {symbol.symbol_type:10} | {symbol.kind.value:10} | {addr_str:8} | {access_info} | init:{init_str}")
+                init_str = "Sí" if symbol.is_initialized else "No"
+                display_type = symbol.get_display_type()
+
+                print(f"  {name:15} | {display_type:20} | {symbol.kind.value:10} | {addr_str:10} | {init_str:12} | {symbol.size:8}")
     
     def validate_usage(self, name: str, line_number: Optional[int] = None) -> tuple[bool, str]:
         symbol = self.lookup(name)

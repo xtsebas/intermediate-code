@@ -10,12 +10,9 @@ class TemporaryPool:
         self.global_max_temps = 0
     
     def allocate(self) -> str:
-        if self.available_temps:
-            temp_name = self.available_temps.popleft()
-        else:
-            temp_name = f"t{self.next_temp_id}"
-            self.next_temp_id += 1
-        
+        # Siempre usar el siguiente ID secuencial, no reutilizar
+        temp_name = f"t{self.next_temp_id}"
+        self.next_temp_id += 1
         self.in_use_temps.add(temp_name)
         
         if self.get_in_use_count() > self.global_max_temps:
@@ -26,7 +23,7 @@ class TemporaryPool:
     def free(self, temp_name: str) -> bool:
         if temp_name in self.in_use_temps:
             self.in_use_temps.remove(temp_name)
-            self.available_temps.append(temp_name)
+            # No agregamos a available_temps para evitar reutilización
             return True
         return False
     
@@ -93,7 +90,6 @@ class TemporaryPool:
         return (f"TemporaryPool(allocated={stats['total_allocated']}, "
                 f"in_use={stats['in_use']}, available={stats['available']}, "
                 f"max_simultaneous={stats['max_simultaneous']})")
-
 
 class ScopedTemporaryManager:
     def __init__(self):
