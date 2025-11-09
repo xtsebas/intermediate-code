@@ -54,6 +54,11 @@ class MIPSTranslator:
         self.function_param_count: Dict[str, int] = {}
         self.pending_params: List[str] = []  # Parámetros pendientes para llamada
 
+        # Estado de memoria y arrays
+        self.array_info: Dict[str, Dict] = {}  # array_name -> {size, element_size, base_addr}
+        self.heap_ptr = 0x10000000  # Puntero inicial del heap (MIPS)
+        self.array_to_register: Dict[str, RegisterType] = {}  # array_name -> registro con dirección
+
     def translate(self, triplet: Triplet) -> List[MIPSInstruction]:
         """
         Traduce un triplet TAC a instrucciones MIPS.
@@ -105,6 +110,12 @@ class MIPSTranslator:
             instructions = self._translate_enter(triplet)
         elif triplet.op == OpCode.EXIT:
             instructions = self._translate_exit(triplet)
+        elif triplet.op == OpCode.ARRAY_ALLOC:
+            instructions = self._translate_array_alloc(triplet)
+        elif triplet.op == OpCode.ARRAY_GET:
+            instructions = self._translate_array_get(triplet)
+        elif triplet.op == OpCode.ARRAY_SET:
+            instructions = self._translate_array_set(triplet)
         else:
             # Operación no reconocida
             instructions = [MIPSInstruction("nop", comment=f"Unsupported: {triplet.op.value}")]
@@ -1124,6 +1135,220 @@ class MIPSTranslator:
 
         return instructions
 
+    # ========== ARRAYS Y MEMORIA ==========
+
+    def _translate_array_alloc(self, triplet: Triplet) -> List[MIPSInstruction]:
+        """
+        Traduce ARRAY_ALLOC: allocar array en el heap
+
+        MIPS:
+            # Calcular tamaño en bytes
+            li $a0, size_in_bytes
+            # Llamada a syscall 9 (sbrk) para asignar memoria
+            li $v0, 9
+            syscall
+            # $v0 contiene la dirección base del array
+
+        En simuladores simples, usamos pseudo-instrucciones:
+            # Cargar dirección en un registro
+            la $t0, array_label
+        """
+        instructions = []
+
+        array_name = str(triplet.result.value) if triplet.result else "unknown_array"
+        size = triplet.arg1.value if triplet.arg1 and triplet.arg1.is_constant() else 1
+        element_size = triplet.arg2.value if triplet.arg2 and triplet.arg2.is_constant() else 4
+
+        total_size = size * element_size
+
+        # Registrar información del array
+        self.array_info[array_name] = {
+            'size': size,
+            'element_size': element_size,
+            'total_size': total_size,
+            'base_addr': self.heap_ptr
+        }
+
+        # Obtener registro para almacenar dirección base
+        reg_result = self._get_result_register(triplet.result)
+        self.array_to_register[array_name] = reg_result
+
+        # Cargar dirección base usando la pseudo-instrucción la (load address)
+        # En MIPS real, esto sería li $t0, base_addr
+        instructions.append(
+            MIPSInstruction("li", [f"${reg_result.value}", f"0x{self.heap_ptr:x}"],
+                          f"Load array base address for {array_name}")
+        )
+
+        # Actualizar puntero del heap
+        self.heap_ptr += total_size
+
+        instructions.extend(self._store_result(triplet.result, reg_result))
+
+        return instructions
+
+    def _translate_array_get(self, triplet: Triplet) -> List[MIPSInstruction]:
+        """
+        Traduce ARRAY_GET: obtener elemento del array
+
+        MIPS:
+            # Calcular dirección efectiva: base + (index * element_size)
+            lw $t0, base_addr       # Cargar dirección base
+            lw $t1, index           # Cargar índice
+            li $t2, element_size    # Cargar tamaño de elemento
+            mult $t1, $t2           # index * element_size
+            mflo $t3                # Resultado en $t3
+            addu $t4, $t0, $t3      # Dirección efectiva
+            lw $t5, 0($t4)          # Cargar elemento
+        """
+        instructions = []
+
+        array_name = str(triplet.arg1.value) if triplet.arg1 else "unknown"
+        index = triplet.arg2
+
+        # Obtener información del array
+        array_info = self.array_info.get(array_name, {
+            'element_size': 4,
+            'base_addr': self.heap_ptr
+        })
+
+        element_size = array_info.get('element_size', 4)
+
+        # Registros
+        reg_base = self._get_operand_register(triplet.arg1)
+        reg_index = self._get_operand_register(index)
+        reg_result = self._get_result_register(triplet.result)
+        reg_temp = RegisterType.T0  # Registro temporal para cálculos
+
+        # Cargar dirección base del array
+        if array_name in self.array_to_register:
+            reg_base = self.array_to_register[array_name]
+
+        instructions.append(
+            MIPSInstruction("", comment=f"ARRAY_GET: {array_name}[index]")
+        )
+
+        # Cargar índice
+        instructions.extend(self._load_operand(index, reg_index))
+
+        # Calcular offset: index * element_size
+        if element_size != 1:
+            instructions.append(
+                MIPSInstruction("li", ["$t2", str(element_size)],
+                              f"Load element size ({element_size})")
+            )
+            instructions.append(
+                MIPSInstruction("mult", [f"${reg_index.value}", "$t2"],
+                              "Multiply index by element size")
+            )
+            instructions.append(
+                MIPSInstruction("mflo", ["$t3"],
+                              "Get offset in $t3")
+            )
+        else:
+            instructions.append(
+                MIPSInstruction("addu", ["$t3", f"${reg_index.value}", "$zero"],
+                              "Offset = index (element_size = 1)")
+            )
+
+        # Calcular dirección efectiva: base + offset
+        instructions.append(
+            MIPSInstruction("addu", ["$t4", f"${reg_base.value}", "$t3"],
+                          "Calculate effective address")
+        )
+
+        # Cargar elemento del array
+        instructions.append(
+            MIPSInstruction("lw", [f"${reg_result.value}", "0($t4)"],
+                          f"Load array element")
+        )
+
+        instructions.extend(self._store_result(triplet.result, reg_result))
+
+        return instructions
+
+    def _translate_array_set(self, triplet: Triplet) -> List[MIPSInstruction]:
+        """
+        Traduce ARRAY_SET: establecer elemento del array
+
+        MIPS:
+            # Calcular dirección efectiva y escribir valor
+            lw $t0, base_addr       # Dirección base
+            lw $t1, index           # Índice
+            li $t2, element_size    # Tamaño de elemento
+            mult $t1, $t2           # index * element_size
+            mflo $t3                # Offset
+            addu $t4, $t0, $t3      # Dirección efectiva
+            lw $t5, valor           # Cargar valor a escribir
+            sw $t5, 0($t4)          # Escribir en array
+        """
+        instructions = []
+
+        array_name = str(triplet.arg1.value) if triplet.arg1 else "unknown"
+        index = triplet.arg2
+        value = triplet.result
+
+        # Obtener información del array
+        array_info = self.array_info.get(array_name, {
+            'element_size': 4,
+            'base_addr': self.heap_ptr
+        })
+
+        element_size = array_info.get('element_size', 4)
+
+        # Registros
+        reg_base = self._get_operand_register(triplet.arg1)
+        reg_index = self._get_operand_register(index)
+        reg_value = self._get_operand_register(value)
+
+        # Cargar dirección base
+        if array_name in self.array_to_register:
+            reg_base = self.array_to_register[array_name]
+
+        instructions.append(
+            MIPSInstruction("", comment=f"ARRAY_SET: {array_name}[index] = value")
+        )
+
+        # Cargar índice
+        instructions.extend(self._load_operand(index, reg_index))
+
+        # Calcular offset: index * element_size
+        if element_size != 1:
+            instructions.append(
+                MIPSInstruction("li", ["$t2", str(element_size)],
+                              f"Load element size ({element_size})")
+            )
+            instructions.append(
+                MIPSInstruction("mult", [f"${reg_index.value}", "$t2"],
+                              "Multiply index by element size")
+            )
+            instructions.append(
+                MIPSInstruction("mflo", ["$t3"],
+                              "Get offset in $t3")
+            )
+        else:
+            instructions.append(
+                MIPSInstruction("addu", ["$t3", f"${reg_index.value}", "$zero"],
+                              "Offset = index")
+            )
+
+        # Calcular dirección efectiva
+        instructions.append(
+            MIPSInstruction("addu", ["$t4", f"${reg_base.value}", "$t3"],
+                          "Calculate effective address")
+        )
+
+        # Cargar valor a escribir
+        instructions.extend(self._load_operand(value, reg_value))
+
+        # Escribir en array
+        instructions.append(
+            MIPSInstruction("sw", [f"${reg_value.value}", "0($t4)"],
+                          "Write element to array")
+        )
+
+        return instructions
+
     def emit(self, instruction: MIPSInstruction):
         """Emite una instrucción MIPS"""
         self.instructions.append(instruction)
@@ -1150,6 +1375,9 @@ class MIPSTranslator:
         self.current_function = None
         self.function_param_count.clear()
         self.pending_params.clear()
+        self.array_info.clear()
+        self.array_to_register.clear()
+        self.heap_ptr = 0x10000000
 
     def __str__(self) -> str:
         return f"MIPSTranslator({len(self.instructions)} instructions)"
