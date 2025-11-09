@@ -49,6 +49,11 @@ class MIPSTranslator:
         self.operand_to_spill_offset: Dict[str, int] = {}
         self.next_spill_offset = -4  # Offset para spillage (relativo a $fp)
 
+        # Estado de funciones y control de flujo
+        self.current_function: Optional[str] = None
+        self.function_param_count: Dict[str, int] = {}
+        self.pending_params: List[str] = []  # Parámetros pendientes para llamada
+
     def translate(self, triplet: Triplet) -> List[MIPSInstruction]:
         """
         Traduce un triplet TAC a instrucciones MIPS.
@@ -72,6 +77,34 @@ class MIPSTranslator:
             instructions = self._translate_mov(triplet)
         elif triplet.op == OpCode.LABEL:
             instructions = self._translate_label(triplet)
+        elif triplet.op == OpCode.JMP:
+            instructions = self._translate_jmp(triplet)
+        elif triplet.op == OpCode.BEQ:
+            instructions = self._translate_beq(triplet)
+        elif triplet.op == OpCode.BNE:
+            instructions = self._translate_bne(triplet)
+        elif triplet.op == OpCode.BLT:
+            instructions = self._translate_blt(triplet)
+        elif triplet.op == OpCode.BLE:
+            instructions = self._translate_ble(triplet)
+        elif triplet.op == OpCode.BGT:
+            instructions = self._translate_bgt(triplet)
+        elif triplet.op == OpCode.BGE:
+            instructions = self._translate_bge(triplet)
+        elif triplet.op == OpCode.BZ:
+            instructions = self._translate_bz(triplet)
+        elif triplet.op == OpCode.BNZ:
+            instructions = self._translate_bnz(triplet)
+        elif triplet.op == OpCode.PARAM:
+            instructions = self._translate_param(triplet)
+        elif triplet.op == OpCode.CALL:
+            instructions = self._translate_call(triplet)
+        elif triplet.op == OpCode.RETURN:
+            instructions = self._translate_return(triplet)
+        elif triplet.op == OpCode.ENTER:
+            instructions = self._translate_enter(triplet)
+        elif triplet.op == OpCode.EXIT:
+            instructions = self._translate_exit(triplet)
         else:
             # Operación no reconocida
             instructions = [MIPSInstruction("nop", comment=f"Unsupported: {triplet.op.value}")]
@@ -731,6 +764,366 @@ class MIPSTranslator:
 
         return instructions
 
+    # ========== CONTROL DE FLUJO ==========
+
+    def _translate_jmp(self, triplet: Triplet) -> List[MIPSInstruction]:
+        """
+        Traduce JMP: salto incondicional
+
+        MIPS:
+            j label
+        """
+        label = str(triplet.result.value) if triplet.result else "unknown"
+        return [MIPSInstruction("j", [label], f"Jump to {label}")]
+
+    def _translate_beq(self, triplet: Triplet) -> List[MIPSInstruction]:
+        """
+        Traduce BEQ: branch if equal
+
+        MIPS:
+            beq $t0, $t1, label
+        """
+        instructions = []
+        reg_arg1 = self._get_operand_register(triplet.arg1)
+        reg_arg2 = self._get_operand_register(triplet.arg2) if triplet.arg2 else RegisterType.T0
+
+        instructions.extend(self._load_operand(triplet.arg1, reg_arg1))
+        instructions.extend(self._load_operand(triplet.arg2, reg_arg2))
+
+        label = str(triplet.result.value) if triplet.result else "unknown"
+        instructions.append(
+            MIPSInstruction("beq", [f"${reg_arg1.value}", f"${reg_arg2.value}", label],
+                          f"Branch if {triplet.arg1} == {triplet.arg2}")
+        )
+
+        return instructions
+
+    def _translate_bne(self, triplet: Triplet) -> List[MIPSInstruction]:
+        """Traduce BNE: branch if not equal"""
+        instructions = []
+        reg_arg1 = self._get_operand_register(triplet.arg1)
+        reg_arg2 = self._get_operand_register(triplet.arg2) if triplet.arg2 else RegisterType.T0
+
+        instructions.extend(self._load_operand(triplet.arg1, reg_arg1))
+        instructions.extend(self._load_operand(triplet.arg2, reg_arg2))
+
+        label = str(triplet.result.value) if triplet.result else "unknown"
+        instructions.append(
+            MIPSInstruction("bne", [f"${reg_arg1.value}", f"${reg_arg2.value}", label],
+                          f"Branch if {triplet.arg1} != {triplet.arg2}")
+        )
+
+        return instructions
+
+    def _translate_blt(self, triplet: Triplet) -> List[MIPSInstruction]:
+        """Traduce BLT: branch if less than"""
+        instructions = []
+        reg_arg1 = self._get_operand_register(triplet.arg1)
+        reg_arg2 = self._get_operand_register(triplet.arg2) if triplet.arg2 else RegisterType.T0
+
+        instructions.extend(self._load_operand(triplet.arg1, reg_arg1))
+        instructions.extend(self._load_operand(triplet.arg2, reg_arg2))
+
+        label = str(triplet.result.value) if triplet.result else "unknown"
+        instructions.append(
+            MIPSInstruction("slt", ["$at", f"${reg_arg1.value}", f"${reg_arg2.value}"],
+                          "Check arg1 < arg2")
+        )
+        instructions.append(
+            MIPSInstruction("bne", ["$at", "$zero", label],
+                          f"Branch if {triplet.arg1} < {triplet.arg2}")
+        )
+
+        return instructions
+
+    def _translate_ble(self, triplet: Triplet) -> List[MIPSInstruction]:
+        """Traduce BLE: branch if less than or equal"""
+        instructions = []
+        reg_arg1 = self._get_operand_register(triplet.arg1)
+        reg_arg2 = self._get_operand_register(triplet.arg2) if triplet.arg2 else RegisterType.T0
+
+        instructions.extend(self._load_operand(triplet.arg1, reg_arg1))
+        instructions.extend(self._load_operand(triplet.arg2, reg_arg2))
+
+        label = str(triplet.result.value) if triplet.result else "unknown"
+        # arg1 <= arg2 equivale a NOT(arg2 < arg1)
+        instructions.append(
+            MIPSInstruction("slt", ["$at", f"${reg_arg2.value}", f"${reg_arg1.value}"],
+                          "Check arg2 < arg1")
+        )
+        instructions.append(
+            MIPSInstruction("beq", ["$at", "$zero", label],
+                          f"Branch if {triplet.arg1} <= {triplet.arg2}")
+        )
+
+        return instructions
+
+    def _translate_bgt(self, triplet: Triplet) -> List[MIPSInstruction]:
+        """Traduce BGT: branch if greater than"""
+        instructions = []
+        reg_arg1 = self._get_operand_register(triplet.arg1)
+        reg_arg2 = self._get_operand_register(triplet.arg2) if triplet.arg2 else RegisterType.T0
+
+        instructions.extend(self._load_operand(triplet.arg1, reg_arg1))
+        instructions.extend(self._load_operand(triplet.arg2, reg_arg2))
+
+        label = str(triplet.result.value) if triplet.result else "unknown"
+        # arg1 > arg2 equivale a arg2 < arg1
+        instructions.append(
+            MIPSInstruction("slt", ["$at", f"${reg_arg2.value}", f"${reg_arg1.value}"],
+                          "Check arg2 < arg1")
+        )
+        instructions.append(
+            MIPSInstruction("bne", ["$at", "$zero", label],
+                          f"Branch if {triplet.arg1} > {triplet.arg2}")
+        )
+
+        return instructions
+
+    def _translate_bge(self, triplet: Triplet) -> List[MIPSInstruction]:
+        """Traduce BGE: branch if greater than or equal"""
+        instructions = []
+        reg_arg1 = self._get_operand_register(triplet.arg1)
+        reg_arg2 = self._get_operand_register(triplet.arg2) if triplet.arg2 else RegisterType.T0
+
+        instructions.extend(self._load_operand(triplet.arg1, reg_arg1))
+        instructions.extend(self._load_operand(triplet.arg2, reg_arg2))
+
+        label = str(triplet.result.value) if triplet.result else "unknown"
+        # arg1 >= arg2 equivale a NOT(arg1 < arg2)
+        instructions.append(
+            MIPSInstruction("slt", ["$at", f"${reg_arg1.value}", f"${reg_arg2.value}"],
+                          "Check arg1 < arg2")
+        )
+        instructions.append(
+            MIPSInstruction("beq", ["$at", "$zero", label],
+                          f"Branch if {triplet.arg1} >= {triplet.arg2}")
+        )
+
+        return instructions
+
+    def _translate_bz(self, triplet: Triplet) -> List[MIPSInstruction]:
+        """Traduce BZ: branch if zero"""
+        instructions = []
+        reg_arg1 = self._get_operand_register(triplet.arg1)
+
+        instructions.extend(self._load_operand(triplet.arg1, reg_arg1))
+
+        label = str(triplet.result.value) if triplet.result else "unknown"
+        instructions.append(
+            MIPSInstruction("beq", [f"${reg_arg1.value}", "$zero", label],
+                          f"Branch if {triplet.arg1} == 0")
+        )
+
+        return instructions
+
+    def _translate_bnz(self, triplet: Triplet) -> List[MIPSInstruction]:
+        """Traduce BNZ: branch if not zero"""
+        instructions = []
+        reg_arg1 = self._get_operand_register(triplet.arg1)
+
+        instructions.extend(self._load_operand(triplet.arg1, reg_arg1))
+
+        label = str(triplet.result.value) if triplet.result else "unknown"
+        instructions.append(
+            MIPSInstruction("bne", [f"${reg_arg1.value}", "$zero", label],
+                          f"Branch if {triplet.arg1} != 0")
+        )
+
+        return instructions
+
+    # ========== FUNCIONES Y LLAMADAS ==========
+
+    def _translate_enter(self, triplet: Triplet) -> List[MIPSInstruction]:
+        """
+        Traduce ENTER: inicio de función
+
+        MIPS:
+            # Prólogo de función
+            subu $sp, $sp, frame_size
+            sw $ra, offset($sp)
+        """
+        instructions = []
+        func_name = str(triplet.arg1.value) if triplet.arg1 else "unknown"
+        param_count = triplet.arg2.value if triplet.arg2 else 0
+
+        self.current_function = func_name
+        self.function_param_count[func_name] = param_count
+
+        # Comentario de entrada a función
+        instructions.append(
+            MIPSInstruction("", comment=f"Function: {func_name} (params: {param_count})")
+        )
+
+        # Prólogo: reservar espacio en stack (simplificado)
+        frame_size = 8 + param_count * 4  # RA + FP + parámetros
+        instructions.append(
+            MIPSInstruction("subu", ["$sp", "$sp", str(frame_size)],
+                          f"Allocate stack frame ({frame_size} bytes)")
+        )
+
+        # Guardar dirección de retorno
+        instructions.append(
+            MIPSInstruction("sw", ["$ra", "4($sp)"],
+                          "Save return address")
+        )
+
+        # Guardar frame pointer anterior
+        instructions.append(
+            MIPSInstruction("sw", ["$fp", "0($sp)"],
+                          "Save frame pointer")
+        )
+
+        # Establecer nuevo frame pointer
+        instructions.append(
+            MIPSInstruction("addu", ["$fp", "$sp", str(frame_size)],
+                          "Set frame pointer")
+        )
+
+        return instructions
+
+    def _translate_exit(self, triplet: Triplet) -> List[MIPSInstruction]:
+        """
+        Traduce EXIT: salida de función
+
+        MIPS:
+            # Epílogo de función
+            lw $ra, offset($sp)
+            lw $fp, offset($sp)
+            addu $sp, $sp, frame_size
+            jr $ra
+        """
+        instructions = []
+        func_name = str(triplet.arg1.value) if triplet.arg1 else "unknown"
+
+        # Obtener tamaño del frame (simplificado)
+        frame_size = 8 + self.function_param_count.get(func_name, 0) * 4
+
+        # Restaurar dirección de retorno
+        instructions.append(
+            MIPSInstruction("lw", ["$ra", "4($sp)"],
+                          "Restore return address")
+        )
+
+        # Restaurar frame pointer anterior
+        instructions.append(
+            MIPSInstruction("lw", ["$fp", "0($sp)"],
+                          "Restore frame pointer")
+        )
+
+        # Liberar stack frame
+        instructions.append(
+            MIPSInstruction("addu", ["$sp", "$sp", str(frame_size)],
+                          f"Deallocate stack frame ({frame_size} bytes)")
+        )
+
+        # Retornar
+        instructions.append(
+            MIPSInstruction("jr", ["$ra"],
+                          "Return from function")
+        )
+
+        self.current_function = None
+
+        return instructions
+
+    def _translate_param(self, triplet: Triplet) -> List[MIPSInstruction]:
+        """
+        Traduce PARAM: parámetro para llamada de función
+
+        Almacena el parámetro en un registro de argumento (a0-a3)
+        o en el stack si hay más de 4 parámetros.
+        """
+        instructions = []
+
+        # Guardar el parámetro para la próxima llamada
+        reg_arg = self._get_operand_register(triplet.arg1)
+        instructions.extend(self._load_operand(triplet.arg1, reg_arg))
+
+        # Determinar en qué registro ir: a0, a1, a2, a3
+        param_index = len(self.pending_params)
+        if param_index < 4:
+            arg_reg_names = ["$a0", "$a1", "$a2", "$a3"]
+            instructions.append(
+                MIPSInstruction("addu", [arg_reg_names[param_index], f"${reg_arg.value}", "$zero"],
+                              f"Set parameter {param_index}")
+            )
+        else:
+            # Parámetro va al stack
+            stack_offset = (param_index - 4) * 4
+            instructions.append(
+                MIPSInstruction("sw", [f"${reg_arg.value}", f"{stack_offset}($sp)"],
+                              f"Push parameter {param_index}")
+            )
+
+        self.pending_params.append(str(triplet.arg1.value))
+
+        return instructions
+
+    def _translate_call(self, triplet: Triplet) -> List[MIPSInstruction]:
+        """
+        Traduce CALL: llamada a función
+
+        MIPS:
+            # Parámetros ya están en a0-a3 (y stack si es necesario)
+            jal function_name
+            # v0 contiene el retorno
+            move $t0, $v0       # Mover resultado si es necesario
+        """
+        instructions = []
+
+        func_name = str(triplet.arg1.value) if triplet.arg1 else "unknown"
+        param_count = triplet.arg2.value if triplet.arg2 else 0
+
+        # Llamada a función (jump and link)
+        instructions.append(
+            MIPSInstruction("jal", [func_name],
+                          f"Call function {func_name} ({param_count} params)")
+        )
+
+        # Si hay resultado, moverlo desde $v0
+        if triplet.result:
+            reg_result = self._get_result_register(triplet.result)
+            instructions.append(
+                MIPSInstruction("addu", [f"${reg_result.value}", "$v0", "$zero"],
+                              f"Move return value to {triplet.result}")
+            )
+            instructions.extend(self._store_result(triplet.result, reg_result))
+
+        # Limpiar parámetros pendientes
+        self.pending_params.clear()
+
+        return instructions
+
+    def _translate_return(self, triplet: Triplet) -> List[MIPSInstruction]:
+        """
+        Traduce RETURN: retorno de función
+
+        MIPS:
+            # Si hay valor de retorno
+            lw $v0, addr(arg1)  # Cargar valor de retorno
+            jr $ra              # Retornar
+        """
+        instructions = []
+
+        if triplet.arg1:
+            # Hay valor de retorno
+            reg_arg1 = self._get_operand_register(triplet.arg1)
+            instructions.extend(self._load_operand(triplet.arg1, reg_arg1))
+
+            # Mover a $v0 (registro de retorno)
+            instructions.append(
+                MIPSInstruction("addu", ["$v0", f"${reg_arg1.value}", "$zero"],
+                              f"Set return value: {triplet.arg1}")
+            )
+        else:
+            # Sin valor de retorno
+            instructions.append(
+                MIPSInstruction("", comment="Return from function (no value)")
+            )
+
+        return instructions
+
     def emit(self, instruction: MIPSInstruction):
         """Emite una instrucción MIPS"""
         self.instructions.append(instruction)
@@ -754,6 +1147,9 @@ class MIPSTranslator:
         self.operand_to_register.clear()
         self.operand_to_spill_offset.clear()
         self.next_spill_offset = -4
+        self.current_function = None
+        self.function_param_count.clear()
+        self.pending_params.clear()
 
     def __str__(self) -> str:
         return f"MIPSTranslator({len(self.instructions)} instructions)"
