@@ -44,12 +44,21 @@ class FuncCodeGen:
 
     def gen_function_prolog(self, func_name: str, params: List[str],
                        return_type: str = "void") -> None:
+        # Detectar si ya existía una función con el mismo nombre
+        already_defined = func_name in self.functions
+
         func_info = FunctionInfo(func_name, params, return_type)
         self.functions[func_name] = func_info
         self.current_function = func_info
 
+        # Label interno único para control de flujo
         func_label = self.emitter.new_label('func_start')
         self.emitter.emit_label(func_label)
+
+        # Label público con el nombre de la función, usado por CALL/jal.
+        # Solo se emite la primera vez para evitar redefinir labels (p.ej. métodos con el mismo nombre).
+        if not already_defined:
+            self.emitter.emit_label(func_name)
 
         # BeginFunc con tamaño estimado del frame
         frame_size = len(params) * 4 + 32  # params + espacio para locales

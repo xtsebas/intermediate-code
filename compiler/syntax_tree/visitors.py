@@ -290,7 +290,8 @@ class CompiscriptTACVisitor:
         if not isinstance(cond_result, ExprResult):
             temp = cond_result if cond_result else self.emitter.new_temp()
             cond_result = ExprResult(temp)
-            true_jump = self.emitter.emit_conditional_jump(temp, "")
+            # Salto condicional a rellenar: BNZ temp, <label_true>
+            true_jump = self.emitter.emit_conditional_jump(OpCode.BNZ, temp, None, "")
             false_jump = self.emitter.emit_jump("")
             cond_result.true_list.add(true_jump)
             cond_result.false_list.add(false_jump)
@@ -331,7 +332,8 @@ class CompiscriptTACVisitor:
         if not isinstance(cond_result, ExprResult):
             temp = cond_result if cond_result else self.emitter.new_temp()
             cond_result = ExprResult(temp)
-            true_jump = self.emitter.emit_conditional_jump(temp, "")
+            # Salto condicional a rellenar: BNZ temp, <label_true>
+            true_jump = self.emitter.emit_conditional_jump(OpCode.BNZ, temp, None, "")
             false_jump = self.emitter.emit_jump("")
             cond_result.true_list.add(true_jump)
             cond_result.false_list.add(false_jump)
@@ -369,7 +371,8 @@ class CompiscriptTACVisitor:
             self.emitter.backpatch(cond_result.false_list, break_label)
         else:
             temp = cond_result if cond_result else self.emitter.new_temp()
-            self.emitter.emit_conditional_jump(temp, begin_label)
+            # BNZ temp, begin_label
+            self.emitter.emit_conditional_jump(OpCode.BNZ, temp, None, begin_label)
         
         self.emitter.emit_label(break_label)
         
@@ -394,7 +397,8 @@ class CompiscriptTACVisitor:
             if not isinstance(cond_result, ExprResult):
                 temp = cond_result if cond_result else self.emitter.new_temp()
                 cond_result = ExprResult(temp)
-                true_jump = self.emitter.emit_conditional_jump(temp, "")
+                # Salto condicional a rellenar: BNZ temp, <label_true>
+                true_jump = self.emitter.emit_conditional_jump(OpCode.BNZ, temp, None, "")
                 false_jump = self.emitter.emit_jump("")
                 cond_result.true_list.add(true_jump)
                 cond_result.false_list.add(false_jump)
@@ -666,8 +670,8 @@ class CompiscriptTACVisitor:
         # Procesar cada suffixOp en orden
         current_result = primary_result
         for suffix in suffix_ops:
-            # Determinar tipo de suffix
-            if suffix.arguments():  # Es una llamada: func()
+            # Determinar tipo de suffix con comprobaciones seguras por alternativa
+            if hasattr(suffix, 'arguments') and suffix.arguments():  # Es una llamada: func()
                 # Obtener nombre de función
                 func_name = None
                 if ctx.primaryAtom().Identifier():
@@ -712,12 +716,12 @@ class CompiscriptTACVisitor:
                     
                     current_result = ExprResult(result_temp)
             
-            elif suffix.expression():  # Es indexación: arr[index]
+            elif hasattr(suffix, 'expression') and suffix.expression():  # Es indexación: arr[index]
                 suffix_result = self.visit(suffix)
                 if isinstance(suffix_result, ExprResult):
                     current_result = suffix_result
-            
-            elif suffix.Identifier():  # Es acceso a propiedad: obj.prop
+
+            elif hasattr(suffix, 'Identifier') and suffix.Identifier():  # Es acceso a propiedad: obj.prop
                 suffix_result = self.visit(suffix)
                 if isinstance(suffix_result, ExprResult):
                     current_result = suffix_result
@@ -739,13 +743,13 @@ class CompiscriptTACVisitor:
             result = ExprResult(self.emitter.new_temp())
             
             if op_text == '<':
-                true_jump = self.emitter.emit(OpCode.BLT, left_temp, right_temp, "")
+                true_jump = self.emitter.emit_conditional_jump(OpCode.BLT, left_temp, right_temp, "")
             elif op_text == '<=':
-                true_jump = self.emitter.emit(OpCode.BLE, left_temp, right_temp, "")
+                true_jump = self.emitter.emit_conditional_jump(OpCode.BLE, left_temp, right_temp, "")
             elif op_text == '>':
-                true_jump = self.emitter.emit(OpCode.BGT, left_temp, right_temp, "")
+                true_jump = self.emitter.emit_conditional_jump(OpCode.BGT, left_temp, right_temp, "")
             elif op_text == '>=':
-                true_jump = self.emitter.emit(OpCode.BGE, left_temp, right_temp, "")
+                true_jump = self.emitter.emit_conditional_jump(OpCode.BGE, left_temp, right_temp, "")
             else:
                 continue
             
@@ -773,9 +777,9 @@ class CompiscriptTACVisitor:
             result = ExprResult(self.emitter.new_temp())
             
             if op_text == '==':
-                true_jump = self.emitter.emit(OpCode.BEQ, left_temp, right_temp, "")
+                true_jump = self.emitter.emit_conditional_jump(OpCode.BEQ, left_temp, right_temp, "")
             elif op_text == '!=':
-                true_jump = self.emitter.emit(OpCode.BNE, left_temp, right_temp, "")
+                true_jump = self.emitter.emit_conditional_jump(OpCode.BNE, left_temp, right_temp, "")
             else:
                 continue
             
@@ -797,7 +801,7 @@ class CompiscriptTACVisitor:
         if not isinstance(left_result, ExprResult):
             temp = left_result if left_result else self.emitter.new_temp()
             left_result = ExprResult(temp)
-            true_jump = self.emitter.emit_conditional_jump(temp, "")
+            true_jump = self.emitter.emit_conditional_jump(OpCode.BNZ, temp, None, "")
             false_jump = self.emitter.emit_jump("")
             left_result.true_list.add(true_jump)
             left_result.false_list.add(false_jump)
@@ -812,7 +816,7 @@ class CompiscriptTACVisitor:
             if not isinstance(right_result, ExprResult):
                 temp = right_result if right_result else self.emitter.new_temp()
                 right_result = ExprResult(temp)
-                true_jump = self.emitter.emit_conditional_jump(temp, "")
+                true_jump = self.emitter.emit_conditional_jump(OpCode.BNZ, temp, None, "")
                 false_jump = self.emitter.emit_jump("")
                 right_result.true_list.add(true_jump)
                 right_result.false_list.add(false_jump)
@@ -831,7 +835,7 @@ class CompiscriptTACVisitor:
         if not isinstance(left_result, ExprResult):
             temp = left_result if left_result else self.emitter.new_temp()
             left_result = ExprResult(temp)
-            true_jump = self.emitter.emit_conditional_jump(temp, "")
+            true_jump = self.emitter.emit_conditional_jump(OpCode.BNZ, temp, None, "")
             false_jump = self.emitter.emit_jump("")
             left_result.true_list.add(true_jump)
             left_result.false_list.add(false_jump)
@@ -846,7 +850,7 @@ class CompiscriptTACVisitor:
             if not isinstance(right_result, ExprResult):
                 temp = right_result if right_result else self.emitter.new_temp()
                 right_result = ExprResult(temp)
-                true_jump = self.emitter.emit_conditional_jump(temp, "")
+                true_jump = self.emitter.emit_conditional_jump(OpCode.BNZ, temp, None, "")
                 false_jump = self.emitter.emit_jump("")
                 right_result.true_list.add(true_jump)
                 right_result.false_list.add(false_jump)

@@ -238,18 +238,23 @@ class ArrayCodeGen:
         if check_bounds and self.bounds_checking:
             self.gen_bounds_check(array_name, index)
 
-        # 2. Calcular dirección efectiva
-        effective_addr = self.gen_effective_address(array_name, index)
-
-        # 3. Generar ARRAY_GET
-        # array_get effective_addr -> result
+        # 2. Generar ARRAY_GET en forma clásica: ARRAY_GET array, index -> result
         if result_var is None:
             result_var = self.emitter.new_temp()
 
+        # Normalizar índice a Operand
+        idx_operand: Operand
+        if isinstance(index, Operand):
+            idx_operand = index
+        elif isinstance(index, str):
+            idx_operand = var_operand(index)
+        else:
+            idx_operand = const_operand(index)
+
         self.emitter.emit(
             OpCode.ARRAY_GET,
-            temp_operand(effective_addr),
-            None,
+            var_operand(array_name),
+            idx_operand,
             temp_operand(result_var),
             comment=f"Load {array_name}[index]"
         )
@@ -280,20 +285,27 @@ class ArrayCodeGen:
         if check_bounds and self.bounds_checking:
             self.gen_bounds_check(array_name, index)
 
-        # 2. Calcular dirección efectiva
-        effective_addr = self.gen_effective_address(array_name, index)
+        # 2. Normalizar índice y valor a Operand
+        if isinstance(index, Operand):
+            idx_operand = index
+        elif isinstance(index, str):
+            idx_operand = var_operand(index)
+        else:
+            idx_operand = const_operand(index)
 
-        # 3. Convertir value a Operand
-        if isinstance(value, str):
-            value = var_operand(value)
+        if isinstance(value, Operand):
+            val_operand_ = value
+        elif isinstance(value, str):
+            val_operand_ = var_operand(value)
+        else:
+            val_operand_ = const_operand(value)
 
-        # 4. Generar ARRAY_SET
-        # array_set effective_addr, value
+        # 3. Generar ARRAY_SET en forma clásica: ARRAY_SET array, index, value
         triplet_index = self.emitter.emit(
             OpCode.ARRAY_SET,
-            temp_operand(effective_addr),
-            value,
-            None,
+            var_operand(array_name),
+            idx_operand,
+            val_operand_,
             comment=f"Store to {array_name}[index]"
         )
 

@@ -132,8 +132,10 @@ class TripletEmitter:
         for triplet_index in patch_list.get_patches():
             if 0 <= triplet_index < len(self.table.triplets):
                 triplet = self.table.triplets[triplet_index]
-                if triplet.is_jump() and triplet.result is None:
-                    triplet.result = label_operand(label_name)
+                if triplet.is_jump():
+                    # Patch when no target yet, or placeholder empty label
+                    if triplet.result is None or (triplet.result.is_label() and str(triplet.result) == ""):
+                        triplet.result = label_operand(label_name)
     
     def make_list(self, triplet_index: int) -> BackpatchList:
         bp_list = BackpatchList()
@@ -178,8 +180,11 @@ class TripletEmitter:
         self.current_function = func_name
         self.function_params[func_name] = params
         
+        # Label interno único para control de flujo
         func_label = self.new_label('func_start')
         self.emit_label(func_label)
+        # Label público con el nombre de la función (para CALL/jal)
+        self.emit_label(func_name)
         self.emit(OpCode.ENTER, func_operand(func_name), const_operand(len(params)))
     
     def exit_function(self):

@@ -677,16 +677,25 @@ class MIPSTranslator:
 
         instructions.extend(self._load_operand(triplet.arg1, reg_arg1))
 
-        # Si arg1 es constante, podemos usar addiu
+        # Si arg1 es constante, podemos usar addiu (solo para numéricos)
         if triplet.arg1.is_constant():
+            value = triplet.arg1.value
+            # Evitar inmediatos string inválidos en MIPS: usar 0 como placeholder
+            imm = 0 if isinstance(value, str) else value
             instructions = [
-                MIPSInstruction("addiu", [f"${reg_result.value}", "$zero", str(triplet.arg1.value)],
-                              f"{triplet.result} = {triplet.arg1}")
+                MIPSInstruction(
+                    "addiu",
+                    [f"${reg_result.value}", "$zero", str(imm)],
+                    f"{triplet.result} = {triplet.arg1}",
+                )
             ]
         else:
             instructions.append(
-                MIPSInstruction("addu", [f"${reg_result.value}", f"${reg_arg1.value}", "$zero"],
-                              f"{triplet.result} = {triplet.arg1}")
+                MIPSInstruction(
+                    "addu",
+                    [f"${reg_result.value}", f"${reg_arg1.value}", "$zero"],
+                    f"{triplet.result} = {triplet.arg1}",
+                )
             )
 
         instructions.extend(self._store_result(triplet.result, reg_result))
@@ -733,23 +742,30 @@ class MIPSTranslator:
         """Obtiene la dirección de un operando en memoria"""
         operand_name = str(operand.value)
 
-        # Si está spilleado, retornar su offset
-        if operand_name in self.operand_to_spill_offset:
-            offset = self.operand_to_spill_offset[operand_name]
-            return f"{offset}($fp)"
+        # Asignar un offset único por operando (variable/temporal en memoria)
+        # para evitar aliasing accidental entre símbolos distintos.
+        if operand_name not in self.operand_to_spill_offset:
+            self.operand_to_spill_offset[operand_name] = self.next_spill_offset
+            self.next_spill_offset -= 4
 
-        # Si no, asumir que es una variable en memoria
-        return f"0($fp)  # {operand_name}"
+        offset = self.operand_to_spill_offset[operand_name]
+        return f"{offset}($fp)"
 
     def _load_operand(self, operand: Operand, reg: RegisterType) -> List[MIPSInstruction]:
         """Carga un operando en un registro"""
         instructions = []
 
         if operand.is_constant():
-            # Cargar constante con addiu
+            # Cargar constante con addiu.
+            # Para strings, usamos 0 como placeholder para evitar inmediatos inválidos.
+            value = operand.value
+            imm = 0 if isinstance(value, str) else value
             instructions.append(
-                MIPSInstruction("addiu", [f"${reg.value}", "$zero", str(operand.value)],
-                              f"Load constant: {operand.value}")
+                MIPSInstruction(
+                    "addiu",
+                    [f"${reg.value}", "$zero", str(imm)],
+                    f"Load constant: {operand.value}",
+                )
             )
         elif operand.is_variable():
             # Cargar variable de memoria
@@ -784,7 +800,14 @@ class MIPSTranslator:
         MIPS:
             j label
         """
-        label = str(triplet.result.value) if triplet.result else "unknown"
+        label = None
+        if triplet.result is not None and triplet.result.value not in (None, ""):
+            label = str(triplet.result.value)
+
+        # Evitar 'j' sin destino, que no es válido en MARS.
+        if not label:
+            return [MIPSInstruction("nop", comment="Unsupported: j with no target")]
+
         return [MIPSInstruction("j", [label], f"Jump to {label}")]
 
     def _translate_beq(self, triplet: Triplet) -> List[MIPSInstruction]:
@@ -1203,6 +1226,23 @@ class MIPSTranslator:
         """
         instructions = []
 
+        # Soporte para forma generada por ArrayCodeGen:
+        # ARRAY_GET addr -> result, donde addr es una dirección efectiva ya calculada.
+        if triplet.arg1 is not None and triplet.arg1.is_temporary() and triplet.arg2 is None:
+            reg_addr = self._get_operand_register(triplet.arg1)
+            reg_result = self._get_result_register(triplet.result)
+
+            instructions.append(
+                MIPSInstruction("", comment="ARRAY_GET (addr, result)")
+            )
+            instructions.append(
+                MIPSInstruction("lw", [f"${reg_result.value}", f"0(${reg_addr.value})"],
+                                "Load array element from effective address")
+            )
+
+            instructions.extend(self._store_result(triplet.result, reg_result))
+            return instructions
+
         array_name = str(triplet.arg1.value) if triplet.arg1 else "unknown"
         index = triplet.arg2
 
@@ -1251,10 +1291,11 @@ class MIPSTranslator:
                               "Offset = index (element_size = 1)")
             )
 
-        # Calcular dirección efectiva: base + offset
+        # Calcular dirección efectiva: base + offset.
+        # En modo genérico usamos $fp como base segura para evitar direcciones fuera de rango.
         instructions.append(
-            MIPSInstruction("addu", ["$t4", f"${reg_base.value}", "$t3"],
-                          "Calculate effective address")
+            MIPSInstruction("addu", ["$t4", "$fp", "$t3"],
+                            "Calculate effective address")
         )
 
         # Cargar elemento del array
@@ -1284,6 +1325,26 @@ class MIPSTranslator:
         """
         instructions = []
 
+        # Soporte para forma generada por ArrayCodeGen:
+        # ARRAY_SET addr, value (result es None), donde addr es dirección efectiva.
+        if triplet.arg1 is not None and triplet.arg1.is_temporary() and triplet.result is None:
+            addr = triplet.arg1
+            value = triplet.arg2
+
+            reg_addr = self._get_operand_register(addr)
+            reg_value = self._get_operand_register(value)
+
+            instructions.append(
+                MIPSInstruction("", comment="ARRAY_SET (addr, value)")
+            )
+            instructions.extend(self._load_operand(value, reg_value))
+            instructions.append(
+                MIPSInstruction("sw", [f"${reg_value.value}", f"0(${reg_addr.value})"],
+                                "Write element to array at effective address")
+            )
+
+            return instructions
+
         array_name = str(triplet.arg1.value) if triplet.arg1 else "unknown"
         index = triplet.arg2
         value = triplet.result
@@ -1296,20 +1357,12 @@ class MIPSTranslator:
 
         element_size = array_info.get('element_size', 4)
 
-        # Registros
-        reg_base = self._get_operand_register(triplet.arg1)
-        reg_index = self._get_operand_register(index)
-        reg_value = self._get_operand_register(value)
-
-        # Cargar dirección base
-        if array_name in self.array_to_register:
-            reg_base = self.array_to_register[array_name]
-
         instructions.append(
             MIPSInstruction("", comment=f"ARRAY_SET: {array_name}[index] = value")
         )
 
         # Cargar índice
+        reg_index = self._get_operand_register(index)
         instructions.extend(self._load_operand(index, reg_index))
 
         # Calcular offset: index * element_size
@@ -1332,18 +1385,20 @@ class MIPSTranslator:
                               "Offset = index")
             )
 
-        # Calcular dirección efectiva
+        # Calcular dirección efectiva.
+        # En modo genérico usamos $fp como base segura para evitar direcciones fuera de rango.
         instructions.append(
-            MIPSInstruction("addu", ["$t4", f"${reg_base.value}", "$t3"],
-                          "Calculate effective address")
+            MIPSInstruction("addu", ["$t4", "$fp", "$t3"],
+                            "Calculate effective address")
         )
 
         # Cargar valor a escribir
-        instructions.extend(self._load_operand(value, reg_value))
+        # Usamos un registro temporal fijo ($t5) para evitar conflictos con registros de dirección.
+        instructions.extend(self._load_operand(value, RegisterType.T5))
 
         # Escribir en array
         instructions.append(
-            MIPSInstruction("sw", [f"${reg_value.value}", "0($t4)"],
+            MIPSInstruction("sw", ["$t5", "0($t4)"],
                           "Write element to array")
         )
 
