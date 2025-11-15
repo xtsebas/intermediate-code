@@ -20,7 +20,10 @@ from compiler.syntax_tree.visitors import CompiscriptTACVisitor
 from compiler.codegen.mips_translator import MIPSTranslator, MIPSInstruction
 from compiler.ir.triplet import Triplet, OpCode
 
-from compiler.backend_new.generated_program import GENERATED_MIPS
+from compiler.backend_new.frontend import IRBuilder
+from compiler.backend_new.ir_lowering import lower_program
+from compiler.backend_new.optimizer import TACOptimizer
+from compiler.backend_new.mips_generator import MIPSBackend
 
 
 def compile_to_tac(source_path: str) -> CompiscriptTACVisitor:
@@ -138,8 +141,13 @@ def tac_to_mips(visitor: CompiscriptTACVisitor) -> str:
 
 
 def compile_with_new_backend(source_path: str) -> str:
-    _ = source_path  # placeholder for future frontend usage
-    return GENERATED_MIPS
+    builder = IRBuilder()
+    program_ir = builder.build(source_path)
+    tac_program = lower_program(program_ir)
+    optimizer = TACOptimizer()
+    optimizer.optimize_program(tac_program)
+    backend = MIPSBackend()
+    return backend.generate(tac_program)
 
 
 def main(argv: list[str]) -> int:

@@ -130,6 +130,8 @@ class TACGenerator:
             self.frame.ensure(dest)
         for arg in args:
             if isinstance(arg, str):
+                if arg in self.program.strings or arg in self.program.arrays or arg in self.program.globals:
+                    continue
                 self.frame.ensure(arg)
         self.emit(TACInstruction(op=TACOp.CALL, dest=dest, label=target, args=args))
 

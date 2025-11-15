@@ -1,14 +1,31 @@
-"""Prototype Compiscript frontend that builds IR nodes for the new backend."""
+"""High level Compiscript frontend that builds the IR tree."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import List, Optional
-
+import ast as pyast
 import os
 import sys
+from typing import List
 
 from antlr4 import FileStream, CommonTokenStream
+
+from .ir_nodes import (
+    ProgramIR,
+    GlobalVariable,
+    FunctionIR,
+    Parameter,
+    BlockStmt,
+    VarDeclStmt,
+    PrintStmt,
+    ReturnStmt,
+    Statement,
+    Expression,
+    IntLiteral,
+    StringLiteral,
+    VarExpr,
+    BinaryExpr,
+    CallExpr,
+)
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 GRAMMAR_DIR = os.path.join(PROJECT_ROOT, "program", "grammar")
@@ -21,97 +38,128 @@ from CompiscriptLexer import CompiscriptLexer
 from CompiscriptParser import CompiscriptParser
 from CompiscriptVisitor import CompiscriptVisitor
 
-from .ir_nodes import (
-    ProgramIR,
-    GlobalVariable,
-    FunctionIR,
-    Parameter,
-    BlockStmt,
-    Statement,
-    VarDeclStmt,
-    ExprStmt,
-    PrintStmt,
-    Expression,
-    IntLiteral,
-)
 
+class _ExprBuilder(pyast.NodeVisitor):
+    def build(self, text: str) -> Expression:
+        node = pyast.parse(text, mode="eval").body
+        return self.visit(node)
 
-@dataclass
-class ParsedProgram:
-    ir: ProgramIR
+    def visit_Name(self, node: pyast.Name) -> Expression:
+        return VarExpr(name=node.id)
+
+    def visit_Constant(self, node: pyast.Constant) -> Expression:
+        if isinstance(node.value, int):
+            return IntLiteral(value=node.value)
+        if isinstance(node.value, str):
+            return StringLiteral(value=node.value)
+        raise NotImplementedError(f"Unsupported literal {node.value!r}")
+
+    def visit_Call(self, node: pyast.Call) -> Expression:
+        if not isinstance(node.func, pyast.Name):
+            raise NotImplementedError("Only simple function calls supported")
+        callee = node.func.id
+        args = [self.visit(arg) for arg in node.args]
+        return CallExpr(callee=callee, args=args)
+
+    def visit_BinOp(self, node: pyast.BinOp) -> Expression:
+        if not isinstance(node.op, pyast.Add):
+            raise NotImplementedError("Only addition is supported")
+        left = self.visit(node.left)
+        right = self.visit(node.right)
+        return BinaryExpr(op="+", left=left, right=right)
+
+    def generic_visit(self, node):
+        raise NotImplementedError(f"Unsupported expression: {pyast.dump(node)}")
 
 
 class IRBuilder(CompiscriptVisitor):
-    """Minimal IR builder for a subset of Compiscript."""
+    """Builds ProgramIR from an ANTLR parse tree (limited subset)."""
 
     def __init__(self) -> None:
         super().__init__()
-        self.globals: List[GlobalVariable] = []
-        self.functions: List[FunctionIR] = []
-        self.main_statements: List[Statement] = []
+        self.expr_builder = _ExprBuilder()
 
-    # --- entry points ---------------------------------------------------
-
-    def build(self, source_path: str) -> ParsedProgram:
-        input_stream = FileStream(source_path, encoding="utf-8")
-        lexer = CompiscriptLexer(input_stream)
+    def build(self, source_path: str) -> ProgramIR:
+        stream = FileStream(source_path, encoding="utf-8")
+        lexer = CompiscriptLexer(stream)
         tokens = CommonTokenStream(lexer)
         parser = CompiscriptParser(tokens)
         tree = parser.program()
-        self.visit(tree)
-        main_block = BlockStmt(statements=self.main_statements)
-        program = ProgramIR(
-            globals=self.globals,
-            classes=[],
-            functions=self.functions,
-            main_block=main_block,
-        )
-        return ParsedProgram(ir=program)
+        return self.visitProgram(tree)
 
-    # --- visitors -------------------------------------------------------
+    # ---------------- Program / Blocks ----------------
 
     def visitProgram(self, ctx: CompiscriptParser.ProgramContext):
-        for stmt_ctx in ctx.statement():
-            node = self.visit(stmt_ctx)
-            if isinstance(node, GlobalVariable):
-                self.globals.append(node)
-            elif isinstance(node, FunctionIR):
-                self.functions.append(node)
+        globals: List[GlobalVariable] = []
+        functions: List[FunctionIR] = []
+        main_statements: List[Statement] = []
+
+        stmts = ctx.statement()
+        for stmt_ctx in stmts:
+            node = None
+            if stmt_ctx.functionDeclaration():
+                node = self.visitFunctionDeclaration(stmt_ctx.functionDeclaration())
+            elif stmt_ctx.variableDeclaration():
+                node = self.visitVariableDeclaration(stmt_ctx.variableDeclaration())
+            elif stmt_ctx.printStatement():
+                node = self.visitPrintStatement(stmt_ctx.printStatement())
+            else:
+                node = self.visitChildren(stmt_ctx)
+            if isinstance(node, FunctionIR):
+                functions.append(node)
             elif isinstance(node, Statement):
-                self.main_statements.append(node)
-        return None
+                main_statements.append(node)
 
-    def visitConstantDeclaration(self, ctx: CompiscriptParser.ConstantDeclarationContext):
-        name = ctx.Identifier().getText()
-        expr = IntLiteral(int(ctx.expression().getText()))
-        global_var = GlobalVariable(name=name, var_type="integer", mutable=False, initializer=expr)
-        return global_var
+        main_block = BlockStmt(statements=main_statements)
+        return ProgramIR(globals=globals, classes=[], functions=functions, main_block=main_block)
 
-    def visitVariableDeclaration(self, ctx: CompiscriptParser.VariableDeclarationContext):
-        name = ctx.Identifier().getText()
-        if ctx.expression():
-            expr = IntLiteral(int(ctx.expression().getText()))
-        else:
-            expr = None
-        return VarDeclStmt(name=name, var_type="integer", initializer=expr)
+    def _build_block(self, block_ctx: CompiscriptParser.BlockContext) -> BlockStmt:
+        statements: List[Statement] = []
+        for stmt_ctx in block_ctx.statement():
+            node = None
+            if stmt_ctx.returnStatement():
+                node = self.visitReturnStatement(stmt_ctx.returnStatement())
+            elif stmt_ctx.variableDeclaration():
+                node = self.visitVariableDeclaration(stmt_ctx.variableDeclaration())
+            elif stmt_ctx.printStatement():
+                node = self.visitPrintStatement(stmt_ctx.printStatement())
+            else:
+                node = self.visitChildren(stmt_ctx)
+            if isinstance(node, Statement):
+                statements.append(node)
+        return BlockStmt(statements=statements)
+
+    # ---------------- Statements ----------------------
 
     def visitFunctionDeclaration(self, ctx: CompiscriptParser.FunctionDeclarationContext):
         name = ctx.Identifier().getText()
         params: List[Parameter] = []
         if ctx.parameters():
-            for param_ctx in ctx.parameters().parameter():
+            for index, param_ctx in enumerate(ctx.parameters().parameter()):
                 pname = param_ctx.Identifier().getText()
                 params.append(Parameter(name=pname, type="integer"))
-        body_block = BlockStmt(statements=[])
-        function = FunctionIR(name=name, params=params, return_type="integer", body=body_block)
-        return function
+        body = self._build_block(ctx.block())
+        return FunctionIR(name=name, params=params, return_type="integer", body=body)
 
-    def visitExpressionStatement(self, ctx: CompiscriptParser.ExpressionStatementContext):
-        expr = self.visit(ctx.expression())
-        if isinstance(expr, Expression):
-            return ExprStmt(expr=expr)
-        return None
+    def visitVariableDeclaration(self, ctx: CompiscriptParser.VariableDeclarationContext):
+        name = ctx.Identifier().getText()
+        init_expr = None
+        if ctx.initializer():
+            init_expr = self._build_expression(ctx.initializer().expression())
+        return VarDeclStmt(name=name, var_type="integer", initializer=init_expr)
 
     def visitPrintStatement(self, ctx: CompiscriptParser.PrintStatementContext):
-        expr = IntLiteral(0)
+        expr = self._build_expression(ctx.expression())
         return PrintStmt(parts=[expr])
+
+    def visitReturnStatement(self, ctx: CompiscriptParser.ReturnStatementContext):
+        value_expr = None
+        if ctx.expression():
+            value_expr = self._build_expression(ctx.expression())
+        return ReturnStmt(value=value_expr)
+
+    # ---------------- Expressions ---------------------
+
+    def _build_expression(self, expr_ctx: CompiscriptParser.ExpressionContext) -> Expression:
+        text = expr_ctx.getText()
+        return self.expr_builder.build(text)

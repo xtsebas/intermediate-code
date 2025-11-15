@@ -13,6 +13,7 @@ class FunctionContext:
     fn: TACFunction
     var_offsets: Dict[str, int]
     frame_size: int
+    epilogue_label: str
 
 
 class MIPSBackend:
@@ -38,13 +39,17 @@ class MIPSBackend:
             data_lines.append(f"{name}: .word {words}")
         for name, value in program.globals.items():
             data_lines.append(f"{name}: .word {value}")
-        data_lines.append("vtable_Animal: .word Animal_speak")
-        data_lines.append("vtable_Dog: .word Dog_speak")
         data_lines.append("newline_str: .asciiz \"\\n\"")
         return data_lines
 
     def start_function(self, fn: TACFunction) -> None:
-        ctx = FunctionContext(fn=fn, var_offsets=fn.locals_map, frame_size=max(fn.frame_size, 16))
+        epilogue_label = f"{fn.name}__epilogue"
+        ctx = FunctionContext(
+            fn=fn,
+            var_offsets=fn.locals_map,
+            frame_size=max(fn.frame_size, 16),
+            epilogue_label=epilogue_label,
+        )
         self.context = ctx
         self.emit(f"{fn.name}:")
         self.emit(f"    addiu $sp, $sp, -{ctx.frame_size}")
@@ -159,6 +164,13 @@ class MIPSBackend:
             self.load_operand(instr.arg1, "$t0")
             self.emit(f"    bne $t0, $zero, {instr.label}")
             return
+        if instr.op == TACOp.PARAM:
+            offset = self.context.var_offsets.get(instr.dest)
+            if offset is None:
+                raise KeyError(f"Unknown parameter {instr.dest}")
+            reg = f"$a{int(instr.arg1)}"
+            self.emit(f"    sw {reg}, -{offset}($fp)")
+            return
         if instr.op == TACOp.CALL:
             args = instr.args or []
             for idx, arg in enumerate(args):
@@ -170,7 +182,8 @@ class MIPSBackend:
         if instr.op == TACOp.RET:
             if instr.arg1 is not None:
                 self.load_operand(instr.arg1, "$v0")
-            self.emit("    j __fn_epilogue")
+            label = self.context.epilogue_label if self.context else "__fn_epilogue"
+            self.emit(f"    j {label}")
             return
         if instr.op == TACOp.ARRAY_GET:
             base = instr.arg1
@@ -228,9 +241,66 @@ class MIPSBackend:
             self.start_function(fn)
             for instr in fn.instructions:
                 self.lower_instruction(instr)
-            self.emit("__fn_epilogue:")
+            self.emit(self.context.epilogue_label + ":")
             self.end_function()
             self.emit("")
-        # Append runtime helpers placeholder
-        self.emit("# Runtime helpers would follow here")
+        self.emit_runtime_helpers()
         return "\n".join(self.lines)
+
+    def emit_runtime_helpers(self) -> None:
+        helpers = [
+            ("print_string", [
+                "    addiu $sp, $sp, -16",
+                "    sw $ra, 12($sp)",
+                "    sw $fp, 8($sp)",
+                "    move $fp, $sp",
+                "    li $v0, 4",
+                "    syscall",
+                "    lw $ra, 12($sp)",
+                "    lw $fp, 8($sp)",
+                "    addiu $sp, $sp, 16",
+                "    jr $ra",
+            ]),
+            ("print_int", [
+                "    addiu $sp, $sp, -16",
+                "    sw $ra, 12($sp)",
+                "    sw $fp, 8($sp)",
+                "    move $fp, $sp",
+                "    li $v0, 1",
+                "    syscall",
+                "    lw $ra, 12($sp)",
+                "    lw $fp, 8($sp)",
+                "    addiu $sp, $sp, 16",
+                "    jr $ra",
+            ]),
+            ("print_newline", [
+                "    addiu $sp, $sp, -16",
+                "    sw $ra, 12($sp)",
+                "    sw $fp, 8($sp)",
+                "    move $fp, $sp",
+                "    la $a0, newline_str",
+                "    li $v0, 4",
+                "    syscall",
+                "    lw $ra, 12($sp)",
+                "    lw $fp, 8($sp)",
+                "    addiu $sp, $sp, 16",
+                "    jr $ra",
+            ]),
+            ("exit_program", [
+                "    addiu $sp, $sp, -16",
+                "    sw $ra, 12($sp)",
+                "    sw $fp, 8($sp)",
+                "    move $fp, $sp",
+                "    li $v0, 10",
+                "    syscall",
+                "    lw $ra, 12($sp)",
+                "    lw $fp, 8($sp)",
+                "    addiu $sp, $sp, 16",
+                "    jr $ra",
+            ]),
+        ]
+        for name, body in helpers:
+            self.emit(f"{name}:")
+            for line in body:
+                self.emit(line)
+            self.emit("")
