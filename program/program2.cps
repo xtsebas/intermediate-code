@@ -42,3 +42,12 @@ let numbers: integer[] = [1, 2, 3];
 foreach (n in numbers) {
   print("foreach n = " + n);
 }
+
+switch (counter) {
+  case 5:
+    print("counter is five");
+  case 6:
+    print("counter is six");
+  default:
+    print("counter is something else");
+}

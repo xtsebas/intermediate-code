@@ -7,6 +7,10 @@ str_4: .asciiz "counter = "
 str_5: .asciiz "do-while counter = "
 str_6: .asciiz "for loop i = "
 str_7: .asciiz "foreach n = "
+str_8: .asciiz "counter is five"
+str_9: .asciiz "counter is six"
+str_10: .asciiz "counter is something else"
+numbers: .word 1, 2, 3
 newline_str: .asciiz "\n"
 
 .text
@@ -70,9 +74,9 @@ computeValues__epilogue:
     jr $ra
 
 main:
-    addiu $sp, $sp, -216
-    sw $ra, 212($sp)
-    sw $fp, 208($sp)
+    addiu $sp, $sp, -248
+    sw $ra, 244($sp)
+    sw $fp, 240($sp)
     move $fp, $sp
     li $a0, 10
     jal triple
@@ -112,9 +116,9 @@ if_false_1:
     jal print_newline
 if_end_2:
     li $t0, 0
-    sw $t0, -140($fp)
+    sw $t0, -240($fp)
 while_start_3:
-    lw $t0, -140($fp)
+    lw $t0, -240($fp)
     li $t1, 3
     slt $t2, $t0, $t1
     sw $t2, -80($fp)
@@ -124,30 +128,30 @@ while_start_3:
 while_body_4:
     la $a0, str_4
     jal print_string
-    lw $a0, -140($fp)
+    lw $a0, -240($fp)
     jal print_int
     jal print_newline
-    lw $t0, -140($fp)
+    lw $t0, -240($fp)
     li $t1, 1
     addu $t2, $t0, $t1
     sw $t2, -104($fp)
     lw $t0, -104($fp)
-    sw $t0, -140($fp)
+    sw $t0, -240($fp)
     j while_start_3
 while_end_5:
 do_body_6:
     la $a0, str_5
     jal print_string
-    lw $a0, -140($fp)
+    lw $a0, -240($fp)
     jal print_int
     jal print_newline
-    lw $t0, -140($fp)
+    lw $t0, -240($fp)
     li $t1, 1
     addu $t2, $t0, $t1
     sw $t2, -128($fp)
     lw $t0, -128($fp)
-    sw $t0, -140($fp)
-    lw $t0, -140($fp)
+    sw $t0, -240($fp)
+    lw $t0, -240($fp)
     li $t1, 5
     slt $t2, $t0, $t1
     sw $t2, -144($fp)
@@ -198,11 +202,40 @@ for_end_9:
     lw $a0, -212($fp)
     jal print_int
     jal print_newline
+    lw $t0, -240($fp)
+    li $t1, 5
+    seq $t2, $t0, $t1
+    sw $t2, -228($fp)
+    lw $t0, -228($fp)
+    bne $t0, $zero, switch_case_11
+    lw $t0, -240($fp)
+    li $t1, 6
+    seq $t2, $t0, $t1
+    sw $t2, -244($fp)
+    lw $t0, -244($fp)
+    bne $t0, $zero, switch_case_12
+    j switch_default_13
+switch_case_11:
+    la $a0, str_8
+    jal print_string
+    jal print_newline
+    j switch_end_10
+switch_case_12:
+    la $a0, str_9
+    jal print_string
+    jal print_newline
+    j switch_end_10
+switch_default_13:
+    la $a0, str_10
+    jal print_string
+    jal print_newline
+    j switch_end_10
+switch_end_10:
     jal exit_program
 main__epilogue:
-    lw $ra, 212($sp)
-    lw $fp, 208($sp)
-    addiu $sp, $sp, 216
+    lw $ra, 244($sp)
+    lw $fp, 240($sp)
+    addiu $sp, $sp, 248
     jr $ra
 
 print_string:

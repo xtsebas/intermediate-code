@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast as pyast
 import os
 import sys
-from typing import List
+from typing import List, Optional
 
 from antlr4 import FileStream, CommonTokenStream
 
@@ -28,12 +28,17 @@ from .ir_nodes import (
     VarExpr,
     BinaryExpr,
     CallExpr,
+    ArrayIndexExpr,
     IfStmt,
     WhileStmt,
     ForStmt,
     DoWhileStmt,
     ForeachStmt,
     ArrayLiteral,
+    ArrayIndexExpr,
+    SwitchStmt,
+    CaseClause,
+    TryCatchStmt,
 )
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
@@ -115,6 +120,14 @@ class _ExprBuilder(pyast.NodeVisitor):
         elements = [self.visit(el) for el in node.elts]
         return ArrayLiteral(elements=elements)
 
+    def visit_Subscript(self, node: pyast.Subscript) -> Expression:
+        array_expr = self.visit(node.value)
+        index_node = node.slice
+        if isinstance(index_node, pyast.Index):  # py38 compatibility
+            index_node = index_node.value
+        index_expr = self.visit(index_node)
+        return ArrayIndexExpr(array_expr=array_expr, index_expr=index_expr)
+
     def generic_visit(self, node):
         raise NotImplementedError(f"Unsupported expression: {pyast.dump(node)}")
 
@@ -143,32 +156,11 @@ class IRBuilder(CompiscriptVisitor):
 
         stmts = ctx.statement()
         for stmt_ctx in stmts:
-            node = None
             if stmt_ctx.functionDeclaration():
-                node = self.visitFunctionDeclaration(stmt_ctx.functionDeclaration())
-            elif stmt_ctx.whileStatement():
-                node = self.visitWhileStatement(stmt_ctx.whileStatement())
-            elif stmt_ctx.doWhileStatement():
-                node = self.visitDoWhileStatement(stmt_ctx.doWhileStatement())
-            elif stmt_ctx.forStatement():
-                node = self.visitForStatement(stmt_ctx.forStatement())
-            elif stmt_ctx.foreachStatement():
-                node = self.visitForeachStatement(stmt_ctx.foreachStatement())
-            elif stmt_ctx.assignment():
-                node = self.visitAssignment(stmt_ctx.assignment())
-            elif stmt_ctx.expressionStatement():
-                node = self.visitExpressionStatement(stmt_ctx.expressionStatement())
-            elif stmt_ctx.ifStatement():
-                node = self.visitIfStatement(stmt_ctx.ifStatement())
-            elif stmt_ctx.variableDeclaration():
-                node = self.visitVariableDeclaration(stmt_ctx.variableDeclaration())
-            elif stmt_ctx.printStatement():
-                node = self.visitPrintStatement(stmt_ctx.printStatement())
-            else:
-                node = self.visitChildren(stmt_ctx)
-            if isinstance(node, FunctionIR):
-                functions.append(node)
-            elif isinstance(node, Statement):
+                functions.append(self.visitFunctionDeclaration(stmt_ctx.functionDeclaration()))
+                continue
+            node = self._convert_statement(stmt_ctx)
+            if isinstance(node, Statement):
                 main_statements.append(node)
 
         main_block = BlockStmt(statements=main_statements)
@@ -177,29 +169,7 @@ class IRBuilder(CompiscriptVisitor):
     def _build_block(self, block_ctx: CompiscriptParser.BlockContext) -> BlockStmt:
         statements: List[Statement] = []
         for stmt_ctx in block_ctx.statement():
-            node = None
-            if stmt_ctx.returnStatement():
-                node = self.visitReturnStatement(stmt_ctx.returnStatement())
-            elif stmt_ctx.assignment():
-                node = self.visitAssignment(stmt_ctx.assignment())
-            elif stmt_ctx.expressionStatement():
-                node = self.visitExpressionStatement(stmt_ctx.expressionStatement())
-            elif stmt_ctx.whileStatement():
-                node = self.visitWhileStatement(stmt_ctx.whileStatement())
-            elif stmt_ctx.doWhileStatement():
-                node = self.visitDoWhileStatement(stmt_ctx.doWhileStatement())
-            elif stmt_ctx.forStatement():
-                node = self.visitForStatement(stmt_ctx.forStatement())
-            elif stmt_ctx.foreachStatement():
-                node = self.visitForeachStatement(stmt_ctx.foreachStatement())
-            elif stmt_ctx.ifStatement():
-                node = self.visitIfStatement(stmt_ctx.ifStatement())
-            elif stmt_ctx.variableDeclaration():
-                node = self.visitVariableDeclaration(stmt_ctx.variableDeclaration())
-            elif stmt_ctx.printStatement():
-                node = self.visitPrintStatement(stmt_ctx.printStatement())
-            else:
-                node = self.visitChildren(stmt_ctx)
+            node = self._convert_statement(stmt_ctx)
             if isinstance(node, Statement):
                 statements.append(node)
         return BlockStmt(statements=statements)
@@ -277,6 +247,61 @@ class IRBuilder(CompiscriptVisitor):
         iterable = self._build_expression(ctx.expression())
         body = self._build_block(ctx.block())
         return ForeachStmt(iterator=iterator, iterable=iterable, body=body)
+
+    def visitTryCatchStatement(self, ctx: CompiscriptParser.TryCatchStatementContext):
+        try_block = self._build_block(ctx.block(0))
+        catch_var = ctx.Identifier().getText()
+        catch_block = self._build_block(ctx.block(1))
+        return TryCatchStmt(try_block=try_block, catch_var=catch_var, catch_block=catch_block)
+
+    def visitSwitchStatement(self, ctx: CompiscriptParser.SwitchStatementContext):
+        expression = self._build_expression(ctx.expression())
+        cases: List[CaseClause] = []
+        for case_ctx in ctx.switchCase():
+            value = self._build_expression(case_ctx.expression())
+            body_statements: List[Statement] = []
+            for stmt_ctx in case_ctx.statement():
+                stmt = self._convert_statement(stmt_ctx)
+                if isinstance(stmt, Statement):
+                    body_statements.append(stmt)
+            body = BlockStmt(statements=body_statements)
+            cases.append(CaseClause(value=value, body=body))
+        if ctx.defaultCase():
+            default_statements: List[Statement] = []
+            for stmt_ctx in ctx.defaultCase().statement():
+                stmt = self._convert_statement(stmt_ctx)
+                if isinstance(stmt, Statement):
+                    default_statements.append(stmt)
+            default_body = BlockStmt(statements=default_statements)
+            cases.append(CaseClause(value=None, body=default_body))
+        return SwitchStmt(expression=expression, cases=cases)
+
+    def _convert_statement(self, stmt_ctx) -> Optional[Statement]:
+        if stmt_ctx.returnStatement():
+            return self.visitReturnStatement(stmt_ctx.returnStatement())
+        if stmt_ctx.assignment():
+            return self.visitAssignment(stmt_ctx.assignment())
+        if stmt_ctx.expressionStatement():
+            return self.visitExpressionStatement(stmt_ctx.expressionStatement())
+        if stmt_ctx.whileStatement():
+            return self.visitWhileStatement(stmt_ctx.whileStatement())
+        if stmt_ctx.doWhileStatement():
+            return self.visitDoWhileStatement(stmt_ctx.doWhileStatement())
+        if stmt_ctx.forStatement():
+            return self.visitForStatement(stmt_ctx.forStatement())
+        if stmt_ctx.foreachStatement():
+            return self.visitForeachStatement(stmt_ctx.foreachStatement())
+        if stmt_ctx.tryCatchStatement():
+            return self.visitTryCatchStatement(stmt_ctx.tryCatchStatement())
+        if stmt_ctx.switchStatement():
+            return self.visitSwitchStatement(stmt_ctx.switchStatement())
+        if stmt_ctx.ifStatement():
+            return self.visitIfStatement(stmt_ctx.ifStatement())
+        if stmt_ctx.variableDeclaration():
+            return self.visitVariableDeclaration(stmt_ctx.variableDeclaration())
+        if stmt_ctx.printStatement():
+            return self.visitPrintStatement(stmt_ctx.printStatement())
+        return self.visitChildren(stmt_ctx)
 
     def visitReturnStatement(self, ctx: CompiscriptParser.ReturnStatementContext):
         value_expr = None
