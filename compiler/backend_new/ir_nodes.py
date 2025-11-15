@@ -148,9 +148,9 @@ class DoWhileStmt(Statement):
 
 @dataclass
 class ForStmt(Statement):
-    init: Statement
-    condition: Expression
-    update: Statement
+    init: Optional[Statement]
+    condition: Optional[Expression]
+    update: Optional[Statement]
     body: BlockStmt
 
 
