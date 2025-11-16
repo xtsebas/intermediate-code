@@ -160,6 +160,16 @@ class IRBuilder(CompiscriptVisitor):
                 functions.append(self.visitFunctionDeclaration(stmt_ctx.functionDeclaration()))
                 continue
             node = self._convert_statement(stmt_ctx)
+            if isinstance(node, VarDeclStmt) and isinstance(node.initializer, ArrayLiteral):
+                globals.append(
+                    GlobalVariable(
+                        name=node.name,
+                        var_type=node.var_type,
+                        mutable=True,
+                        initializer=node.initializer,
+                    )
+                )
+                continue
             if isinstance(node, Statement):
                 main_statements.append(node)
 

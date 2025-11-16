@@ -10,6 +10,9 @@ str_7: .asciiz "foreach n = "
 str_8: .asciiz "counter is five"
 str_9: .asciiz "counter is six"
 str_10: .asciiz "counter is something else"
+str_11: .asciiz "First: "
+str_12: .asciiz "Second multiple: "
+str_13: .asciiz "Foreach new -> "
 numbers: .word 1, 2, 3
 newline_str: .asciiz "\n"
 
@@ -73,10 +76,60 @@ computeValues__epilogue:
     addiu $sp, $sp, 80
     jr $ra
 
+getMultiples:
+    addiu $sp, $sp, -72
+    sw $ra, 68($sp)
+    sw $fp, 64($sp)
+    move $fp, $sp
+    sw $a0, -64($fp)
+    li $a0, 12
+    li $v0, 9
+    syscall
+    sw $v0, -20($fp)
+    lw $t0, -20($fp)
+    sw $t0, -72($fp)
+    lw $t0, -64($fp)
+    li $t1, 1
+    mul $t2, $t0, $t1
+    sw $t2, -36($fp)
+    lw $t0, -72($fp)
+    li $t1, 0
+    sll $t1, $t1, 2
+    addu $t0, $t0, $t1
+    lw $t2, -36($fp)
+    sw $t2, 0($t0)
+    lw $t0, -64($fp)
+    li $t1, 2
+    mul $t2, $t0, $t1
+    sw $t2, -52($fp)
+    lw $t0, -72($fp)
+    li $t1, 1
+    sll $t1, $t1, 2
+    addu $t0, $t0, $t1
+    lw $t2, -52($fp)
+    sw $t2, 0($t0)
+    lw $t0, -64($fp)
+    li $t1, 3
+    mul $t2, $t0, $t1
+    sw $t2, -68($fp)
+    lw $t0, -72($fp)
+    li $t1, 2
+    sll $t1, $t1, 2
+    addu $t0, $t0, $t1
+    lw $t2, -68($fp)
+    sw $t2, 0($t0)
+    lw $v0, -72($fp)
+    j getMultiples__epilogue
+getMultiples__epilogue:
+    lw $ra, 68($sp)
+    lw $fp, 64($sp)
+    addiu $sp, $sp, 72
+    jr $ra
+
 main:
-    addiu $sp, $sp, -248
-    sw $ra, 244($sp)
-    sw $fp, 240($sp)
+    addiu $sp, $sp, -384
+    sw $ra, 380($sp)
+    sw $fp, 376($sp)
     move $fp, $sp
     li $a0, 10
     jal triple
@@ -116,9 +169,9 @@ if_false_1:
     jal print_newline
 if_end_2:
     li $t0, 0
-    sw $t0, -240($fp)
+    sw $t0, -272($fp)
 while_start_3:
-    lw $t0, -240($fp)
+    lw $t0, -272($fp)
     li $t1, 3
     slt $t2, $t0, $t1
     sw $t2, -80($fp)
@@ -128,30 +181,30 @@ while_start_3:
 while_body_4:
     la $a0, str_4
     jal print_string
-    lw $a0, -240($fp)
+    lw $a0, -272($fp)
     jal print_int
     jal print_newline
-    lw $t0, -240($fp)
+    lw $t0, -272($fp)
     li $t1, 1
     addu $t2, $t0, $t1
     sw $t2, -104($fp)
     lw $t0, -104($fp)
-    sw $t0, -240($fp)
+    sw $t0, -272($fp)
     j while_start_3
 while_end_5:
 do_body_6:
     la $a0, str_5
     jal print_string
-    lw $a0, -240($fp)
+    lw $a0, -272($fp)
     jal print_int
     jal print_newline
-    lw $t0, -240($fp)
+    lw $t0, -272($fp)
     li $t1, 1
     addu $t2, $t0, $t1
     sw $t2, -128($fp)
     lw $t0, -128($fp)
-    sw $t0, -240($fp)
-    lw $t0, -240($fp)
+    sw $t0, -272($fp)
+    lw $t0, -272($fp)
     li $t1, 5
     slt $t2, $t0, $t1
     sw $t2, -144($fp)
@@ -181,61 +234,129 @@ for_body_8:
     sw $t0, -184($fp)
     j for_start_7
 for_end_9:
-    li $t0, 1
-    sw $t0, -212($fp)
+    li $t0, 0
+    sw $t0, -244($fp)
+foreach_start_10:
+    lw $t0, -244($fp)
+    li $t1, 3
+    slt $t2, $t0, $t1
+    sw $t2, -212($fp)
+    lw $t0, -212($fp)
+    bne $t0, $zero, foreach_body_11
+    j foreach_end_12
+foreach_body_11:
+    la $t0, numbers
+    lw $t1, -244($fp)
+    sll $t1, $t1, 2
+    addu $t0, $t0, $t1
+    lw $t2, 0($t0)
+    sw $t2, -232($fp)
+    lw $t0, -232($fp)
+    sw $t0, -236($fp)
     la $a0, str_7
     jal print_string
-    lw $a0, -212($fp)
+    lw $a0, -236($fp)
     jal print_int
     jal print_newline
-    li $t0, 2
-    sw $t0, -212($fp)
-    la $a0, str_7
-    jal print_string
-    lw $a0, -212($fp)
-    jal print_int
-    jal print_newline
-    li $t0, 3
-    sw $t0, -212($fp)
-    la $a0, str_7
-    jal print_string
-    lw $a0, -212($fp)
-    jal print_int
-    jal print_newline
-    lw $t0, -240($fp)
+    lw $t0, -244($fp)
+    li $t1, 1
+    addu $t2, $t0, $t1
+    sw $t2, -244($fp)
+    j foreach_start_10
+foreach_end_12:
+    lw $t0, -272($fp)
     li $t1, 5
     seq $t2, $t0, $t1
-    sw $t2, -228($fp)
-    lw $t0, -228($fp)
-    bne $t0, $zero, switch_case_11
-    lw $t0, -240($fp)
+    sw $t2, -260($fp)
+    lw $t0, -260($fp)
+    bne $t0, $zero, switch_case_14
+    lw $t0, -272($fp)
     li $t1, 6
     seq $t2, $t0, $t1
-    sw $t2, -244($fp)
-    lw $t0, -244($fp)
-    bne $t0, $zero, switch_case_12
-    j switch_default_13
-switch_case_11:
+    sw $t2, -276($fp)
+    lw $t0, -276($fp)
+    bne $t0, $zero, switch_case_15
+    j switch_default_16
+switch_case_14:
     la $a0, str_8
     jal print_string
     jal print_newline
-    j switch_end_10
-switch_case_12:
+    j switch_end_13
+switch_case_15:
     la $a0, str_9
     jal print_string
     jal print_newline
-    j switch_end_10
-switch_default_13:
+    j switch_end_13
+switch_default_16:
     la $a0, str_10
     jal print_string
     jal print_newline
-    j switch_end_10
-switch_end_10:
+    j switch_end_13
+switch_end_13:
+    la $t0, numbers
+    li $t1, 0
+    sll $t1, $t1, 2
+    addu $t0, $t0, $t1
+    lw $t2, 0($t0)
+    sw $t2, -292($fp)
+    lw $t0, -292($fp)
+    sw $t0, -312($fp)
+    li $a0, 4
+    jal getMultiples
+    sw $v0, -308($fp)
+    lw $t0, -308($fp)
+    sw $t0, -304($fp)
+    la $a0, str_11
+    jal print_string
+    lw $a0, -312($fp)
+    jal print_int
+    jal print_newline
+    la $a0, str_12
+    jal print_string
+    lw $t0, -304($fp)
+    li $t1, 1
+    sll $t1, $t1, 2
+    addu $t0, $t0, $t1
+    lw $t2, 0($t0)
+    sw $t2, -324($fp)
+    lw $a0, -324($fp)
+    jal print_int
+    jal print_newline
+    li $t0, 0
+    sw $t0, -380($fp)
+foreach_start_17:
+    lw $t0, -380($fp)
+    li $t1, 3
+    slt $t2, $t0, $t1
+    sw $t2, -348($fp)
+    lw $t0, -348($fp)
+    bne $t0, $zero, foreach_body_18
+    j foreach_end_19
+foreach_body_18:
+    la $t0, numbers
+    lw $t1, -380($fp)
+    sll $t1, $t1, 2
+    addu $t0, $t0, $t1
+    lw $t2, 0($t0)
+    sw $t2, -368($fp)
+    lw $t0, -368($fp)
+    sw $t0, -372($fp)
+    la $a0, str_13
+    jal print_string
+    lw $a0, -372($fp)
+    jal print_int
+    jal print_newline
+    lw $t0, -380($fp)
+    li $t1, 1
+    addu $t2, $t0, $t1
+    sw $t2, -380($fp)
+    j foreach_start_17
+foreach_end_19:
     jal exit_program
 main__epilogue:
-    lw $ra, 244($sp)
-    lw $fp, 240($sp)
-    addiu $sp, $sp, 248
+    lw $ra, 380($sp)
+    lw $fp, 376($sp)
+    addiu $sp, $sp, 384
     jr $ra
 
 print_string:

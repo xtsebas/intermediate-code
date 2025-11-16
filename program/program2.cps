@@ -51,3 +51,17 @@ switch (counter) {
   default:
     print("counter is something else");
 }
+
+function getMultiples(n: integer): integer[] {
+  let result: integer[] = [n * 1, n * 2, n * 3];
+  return result;
+}
+
+let first: integer = numbers[0];
+let multiples: integer[] = getMultiples(4);
+print("First: " + first);
+print("Second multiple: " + multiples[1]);
+
+foreach (value in numbers) {
+  print("Foreach new -> " + value);
+}
