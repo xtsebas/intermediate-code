@@ -1,6 +1,4 @@
 import streamlit as st
-from datetime import datetime
-import io
 import sys
 import os
 from antlr4 import *
@@ -20,15 +18,52 @@ if parent_dir not in sys.path:
 # Imports de la gramática generada
 from CompiscriptLexer import CompiscriptLexer
 from CompiscriptParser import CompiscriptParser
-from program.grammar.CompiscriptVisitor import CompiscriptVisitor
 
-# Import del visitor TAC
-from compiler.syntax_tree.visitors import CompiscriptTACVisitor
+from compiler.backend_new.frontend import IRBuilder
+from compiler.backend_new.ir_lowering import lower_program
+from compiler.backend_new.optimizer import TACOptimizer
+from compiler.backend_new.mips_generator import MIPSBackend
+from compiler.backend_new.ir_nodes import IntLiteral, StringLiteral, BoolLiteral, ArrayLiteral
+
+def _describe_expression(expr):
+    if expr is None:
+        return "-"
+    if isinstance(expr, IntLiteral):
+        return str(expr.value)
+    if isinstance(expr, StringLiteral):
+        return f"\"{expr.value}\""
+    if isinstance(expr, BoolLiteral):
+        return "true" if expr.value else "false"
+    if isinstance(expr, ArrayLiteral):
+        return f"array[{len(expr.elements)}]"
+    return expr.__class__.__name__
+
+
+def _summarize_symbols(program_ir):
+    globals_info = []
+    for glob in program_ir.globals:
+        globals_info.append({
+            "Nombre": glob.name,
+            "Tipo": glob.var_type,
+            "Mutable": "sí" if glob.mutable else "no",
+            "Inicializador": _describe_expression(glob.initializer),
+        })
+
+    functions_info = []
+    for fn in program_ir.functions:
+        params = ", ".join(param.name for param in fn.params) or "—"
+        functions_info.append({
+            "Función": fn.name,
+            "Parámetros": params,
+            "Retorna": fn.return_type,
+        })
+
+    return {"globals": globals_info, "functions": functions_info}
+
 
 def compile_code(source_code):
-    """Compile Compiscript code and return results"""
+    """Compile Compiscript code with new backend and return results"""
     try:
-        # Fase 1: Análisis Léxico
         input_stream = InputStream(source_code)
         lexer = CompiscriptLexer(input_stream)
         stream = CommonTokenStream(lexer)
@@ -36,7 +71,6 @@ def compile_code(source_code):
 
         token_count = len(stream.tokens)
 
-        # Fase 2: Análisis Sintáctico
         parser = CompiscriptParser(stream)
         tree = parser.program()
 
@@ -44,50 +78,33 @@ def compile_code(source_code):
             return {
                 'success': False,
                 'errors': [f'Errores de sintaxis: {parser.getNumberOfSyntaxErrors()}'],
-                'triplets': [],
-                'symbols': {},
-                'memory': {},
-                'arrays': {}
             }
 
-        # Fase 3: Generación de TAC
-        visitor = CompiscriptTACVisitor(CompiscriptParser, CompiscriptVisitor)
-        visitor.visit(tree)
+        builder = IRBuilder()
+        program_ir = builder.visitProgram(tree)
+        symbol_table = _summarize_symbols(program_ir)
 
-        # Recolectar resultados
-        triplets = visitor.get_triplets()
-        symbols = visitor.get_symbols()
+        tac_program = lower_program(program_ir)
+        optimizer = TACOptimizer()
+        tac_program = optimizer.optimize_program(tac_program)
+        tac_dump = tac_program.dump()
 
-        # Obtener información de memoria
-        memory_layout = visitor.memory_manager.get_memory_layout()
-        memory_info = {
-            'global_size': memory_layout['global_segment']['total_size'],
-            'constant_size': memory_layout['const_segment']['total_size'],
-            'current_function': memory_layout['current_function'],
-            'stack_depth': memory_layout['activation_stack_depth']
-        }
-
-        # Obtener información de arreglos
-        arrays = visitor.array_codegen.get_all_arrays()
+        backend = MIPSBackend()
+        asm_code = backend.generate(tac_program)
 
         return {
             'success': True,
             'errors': [],
             'token_count': token_count,
-            'triplets': triplets,
-            'symbols': symbols,
-            'memory': memory_info,
-            'arrays': arrays
+            'symbols': symbol_table,
+            'tac': tac_dump,
+            'asm': asm_code,
         }
 
     except Exception as e:
         return {
             'success': False,
             'errors': [f'{type(e).__name__}: {str(e)}'],
-            'triplets': [],
-            'symbols': {},
-            'memory': {},
-            'arrays': {}
         }
 
 def init_session_state():
@@ -113,8 +130,8 @@ def main():
     init_session_state()
 
     # Header
-    st.title("🔧 Compiscript IDE - Generador de Código Intermedio")
-    st.markdown("**Compilador de Compiscript con generación de Three Address Code (TAC)**")
+    st.title("⚙️ Compiscript IDE")
+    st.markdown("Compila código Compiscript directamente a TAC y MIPS")
 
     # Sidebar for file upload and controls
     with st.sidebar:
@@ -146,17 +163,17 @@ def main():
             st.rerun()
 
         st.markdown("---")
-    # Main content area - Editor de Código
     st.header("📝 Editor de Código")
+    editor_col, preview_col = st.columns(2)
 
-    # Code editor with enhanced styling
-    code = st.text_area(
-        "Código Compiscript:",
-        value=st.session_state.code_content,
-        height=500,
-        key="code_editor",
-        help="Contenido del archivo .cps cargado o escriba código manualmente",
-        placeholder="""// Ejemplo de código Compiscript
+    with editor_col:
+        code = st.text_area(
+            "Código Compiscript:",
+            value=st.session_state.code_content,
+            height=500,
+            key="code_editor",
+            help="Contenido del archivo .cps cargado o escriba código manualmente",
+            placeholder="""// Ejemplo de código Compiscript
 var a = 5;
 var b = 10;
 var result = a + b * 2;
@@ -167,8 +184,13 @@ fun factorial(n) {
         return 1;
     }
     return n * factorial(n - 1);
-}"""
-    )
+}""",
+        )
+
+    with preview_col:
+        st.markdown("**Vista con números de línea**")
+        preview_text = code if code.strip() else "// Sin código"
+        st.code(preview_text, language="javascript", line_numbers=True)
 
     # Update session state when text changes
     if code != st.session_state.code_content:
@@ -208,51 +230,53 @@ fun factorial(n) {
 
         st.markdown("---")
         st.header("📊 Resultados de Compilación")
+        if not result.get('success'):
+            st.error("No se pudo generar TAC/ASM.")
+            for error in result.get('errors', []):
+                st.error(error)
+        else:
+            tab_symbols, tab_tac, tab_asm = st.tabs(["🔤 Tabla de Símbolos", "🧮 TAC", "🛠️ Código MIPS"])
 
-        # Tabs para organizar resultados
-        tab1, tab2, tab3, tab4 = st.tabs(["📝 Triplets TAC", "🔤 Tabla de Símbolos", "💾 Memoria", "📦 Arreglos"])
+            with tab_symbols:
+                st.subheader("Símbolos detectados")
+                symbols = result.get('symbols', {})
+                globals_info = symbols.get('globals', [])
+                functions_info = symbols.get('functions', [])
 
-        with tab1:
-            st.subheader("Triplets de Código Intermedio (TAC)")
-            if result['triplets']:
-                triplet_text = ""
-                for i, triplet in enumerate(result['triplets']):
-                    triplet_text += f"{i:3}: {triplet}\n"
-                st.code(triplet_text, language="asm")
-                st.info(f"Total de triplets: {len(result['triplets'])}")
-            else:
-                st.warning("No se generaron triplets")
+                st.markdown("**Variables Globales**")
+                if globals_info:
+                    st.table(globals_info)
+                else:
+                    st.info("No se detectaron variables globales.")
 
-        with tab2:
-            st.subheader("Tabla de Símbolos")
-            if result['symbols']:
-                for name, symbol in result['symbols'].items():
-                    st.text(f"{name}: {symbol}")
-                st.info(f"Total de símbolos: {len(result['symbols'])}")
-            else:
-                st.warning("Tabla de símbolos vacía")
+                st.markdown("**Funciones**")
+                if functions_info:
+                    st.table(functions_info)
+                else:
+                    st.info("No hay funciones definidas.")
 
-        with tab3:
-            st.subheader("Layout de Memoria")
-            if result['memory']:
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.metric("Segmento Global", f"{result['memory'].get('global_size', 0)} bytes")
-                    st.metric("Segmento Constantes", f"{result['memory'].get('constant_size', 0)} bytes")
-                with col2:
-                    st.metric("Función Actual", result['memory'].get('current_function', 'None'))
-                    st.metric("Profundidad Stack", result['memory'].get('stack_depth', 0))
-            else:
-                st.warning("Sin información de memoria")
+            with tab_tac:
+                st.subheader("Three Address Code (TAC)")
+                tac_text = result.get('tac', '').strip()
+                if tac_text:
+                    st.code(tac_text, language="asm", line_numbers=True)
+                else:
+                    st.info("No se generó TAC.")
 
-        with tab4:
-            st.subheader("Arreglos Declarados")
-            if result['arrays']:
-                for name, array_info in result['arrays'].items():
-                    st.text(f"{name}: {array_info}")
-                st.info(f"Total de arreglos: {len(result['arrays'])}")
-            else:
-                st.warning("No hay arreglos declarados")
+            with tab_asm:
+                st.subheader("Código ensamblador MIPS")
+                asm_text = result.get('asm', '').strip()
+                if asm_text:
+                    st.code(asm_text, language="asm", line_numbers=True)
+                    st.download_button(
+                        "💾 Descargar ASM",
+                        data=asm_text,
+                        file_name="program.asm",
+                        mime="text/plain",
+                        use_container_width=True,
+                    )
+                else:
+                    st.info("No se generó código ensamblador.")
 
 if __name__ == "__main__":
     main()
