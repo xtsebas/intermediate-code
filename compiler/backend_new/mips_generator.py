@@ -298,6 +298,72 @@ class MIPSBackend:
                 "    addiu $sp, $sp, 16",
                 "    jr $ra",
             ]),
+            ("concat_strings", [
+                "    addiu $sp, $sp, -48",
+                "    sw $ra, 44($sp)",
+                "    sw $fp, 40($sp)",
+                "    move $fp, $sp",
+                "    sw $a0, 36($fp)",  # first
+                "    sw $a1, 32($fp)",  # second
+                # len1
+                "    move $t0, $a0",
+                "    li $t1, 0",
+                "concat_len1_loop:",
+                "    lbu $t2, 0($t0)",
+                "    beq $t2, $zero, concat_len1_done",
+                "    addiu $t0, $t0, 1",
+                "    addiu $t1, $t1, 1",
+                "    j concat_len1_loop",
+                "concat_len1_done:",
+                "    sw $t1, 28($fp)",  # len1
+                # len2
+                "    move $t0, $a1",
+                "    li $t1, 0",
+                "concat_len2_loop:",
+                "    lbu $t2, 0($t0)",
+                "    beq $t2, $zero, concat_len2_done",
+                "    addiu $t0, $t0, 1",
+                "    addiu $t1, $t1, 1",
+                "    j concat_len2_loop",
+                "concat_len2_done:",
+                "    sw $t1, 24($fp)",  # len2
+                # allocate len1 + len2 + 1
+                "    lw $t3, 28($fp)",
+                "    lw $t4, 24($fp)",
+                "    addu $t5, $t3, $t4",
+                "    addiu $t5, $t5, 1",
+                "    move $a0, $t5",
+                "    li $v0, 9",
+                "    syscall",
+                "    sw $v0, 20($fp)",  # result
+                # copy first (without null)
+                "    lw $t0, 36($fp)",
+                "    lw $t1, 20($fp)",
+                "concat_copy1_loop:",
+                "    lbu $t2, 0($t0)",
+                "    beq $t2, $zero, concat_copy1_done",
+                "    sb $t2, 0($t1)",
+                "    addiu $t0, $t0, 1",
+                "    addiu $t1, $t1, 1",
+                "    j concat_copy1_loop",
+                "concat_copy1_done:",
+                # copy second including null
+                "    lw $t0, 32($fp)",
+                "concat_copy2_loop:",
+                "    lbu $t2, 0($t0)",
+                "    sb $t2, 0($t1)",
+                "    addiu $t1, $t1, 1",
+                "    beq $t2, $zero, concat_done",
+                "    addiu $t0, $t0, 1",
+                "    j concat_copy2_loop",
+                "concat_done:",
+                "    lw $v0, 20($fp)",
+                "    move $a0, $v0",
+                "    lw $ra, 44($sp)",
+                "    lw $fp, 40($sp)",
+                "    addiu $sp, $sp, 48",
+                "    jr $ra",
+            ]),
         ]
         for name, body in helpers:
             self.emit(f"{name}:")

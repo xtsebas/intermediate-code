@@ -214,6 +214,8 @@ class FunctionIR:
 
 @dataclass
 class MethodIR(FunctionIR):
+    owner: str = ""
+    method_name: str = ""
     is_constructor: bool = False
 
 

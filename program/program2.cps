@@ -1,3 +1,8 @@
+const PI: integer = 314;
+let greeting: string = "Testing typed strings";
+let inferredGreeting = "Inferred hello";
+let featureFlag: boolean = true;
+
 function triple(n: integer): integer {
   let doubled: integer = n + n;
   let tripled: integer = doubled + n;
@@ -11,11 +16,25 @@ function computeValues(x: integer): integer {
   return third;
 }
 
+function factorial(n: integer): integer {
+  if (n <= 1) {
+    return 1;
+  }
+  return n * factorial(n - 1);
+}
+
 let tripleValue: integer = triple(10);
 print("triple(10) = " + tripleValue);
+print("PI value = " + PI);
+print(greeting + " / " + inferredGreeting);
+if (featureFlag) {
+  print("Feature flag is enabled");
+}
 
 let computed: integer = computeValues(7);
 print("computeValues(7) = " + computed);
+let factResult: integer = factorial(5);
+print("factorial(5) = " + factResult);
 
 if (tripleValue > computed) {
   print("triple is larger");
@@ -51,6 +70,35 @@ switch (counter) {
   default:
     print("counter is something else");
 }
+
+class Animal {
+  let name: string;
+
+  function constructor(name: string) {
+    this.name = name;
+  }
+
+  function speak(): string {
+    return this.name + " makes a sound.";
+  }
+}
+
+class Dog : Animal {
+  function speak(): string {
+    return this.name + " barks.";
+  }
+}
+
+let dog: Dog = new Dog("Rex");
+print("Dog says: " + dog.speak());
+dog.name = "Buddy";
+print("Dog renamed: " + dog.speak());
+
+let baseAnimal: Animal = new Animal("Milo");
+print("Animal says: " + baseAnimal.speak());
+
+let poly: Animal = dog;
+print("Polymorphic call: " + poly.speak());
 
 function getMultiples(n: integer): integer[] {
   let result: integer[] = [n * 1, n * 2, n * 3];
