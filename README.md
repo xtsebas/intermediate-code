@@ -178,4 +178,11 @@ pytest --cov=compiler --cov-report=term-missing
 ```
 
 ### TAC -> MIPS
+```bash
 python program/compile_to_mips.py program/program2.cps program/program2_mips.asm
+```
+
+### run IDE
+```bash
+streamlit run ide/app.py
+```
