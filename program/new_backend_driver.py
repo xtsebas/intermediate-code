@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from compiler.backend_new import TACGenerator, TACOptimizer, MIPSBackend
+from compiler.codegen import TACGenerator, TACOptimizer, MIPSBackend
 
 
 OUTPUT_PATH = Path(__file__).with_name("program_new_backend.asm")

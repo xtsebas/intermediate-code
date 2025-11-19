@@ -176,3 +176,6 @@ Cobertura:
 ```bash
 pytest --cov=compiler --cov-report=term-missing
 ```
+
+### TAC -> MIPS
+python program/compile_to_mips.py program/program2.cps program/program2_mips.asm

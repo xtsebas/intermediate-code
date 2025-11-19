@@ -19,11 +19,11 @@ if parent_dir not in sys.path:
 from CompiscriptLexer import CompiscriptLexer
 from CompiscriptParser import CompiscriptParser
 
-from compiler.backend_new.frontend import IRBuilder
-from compiler.backend_new.ir_lowering import lower_program
-from compiler.backend_new.optimizer import TACOptimizer
-from compiler.backend_new.mips_generator import MIPSBackend
-from compiler.backend_new.ir_nodes import IntLiteral, StringLiteral, BoolLiteral, ArrayLiteral
+from compiler.codegen.frontend import IRBuilder
+from compiler.codegen.ir_lowering import lower_program
+from compiler.codegen.optimizer import TACOptimizer
+from compiler.codegen.mips_generator import MIPSBackend
+from compiler.codegen.ir_nodes import IntLiteral, StringLiteral, BoolLiteral, ArrayLiteral
 
 def _describe_expression(expr):
     if expr is None:
